@@ -7,7 +7,7 @@ import { loadConfig } from "./config/loader.js";
 import { Store, type GrantRecord } from "./store/db.js";
 import { Ledger } from "./store/ledger.js";
 import { PolicyEngine } from "./policy/engine.js";
-import { policyFromConfig } from "./tools/circleWallet.js";
+import { MockCircleWallet, policyFromConfig } from "./tools/circleWallet.js";
 import { LiveCircleWallet } from "./tools/circleWalletLive.js";
 import { MockX402Client } from "./tools/x402.js";
 import { MockMeritAssessor, type MeritFixture, type MeritAssessor } from "./agent/scoring.js";
@@ -46,7 +46,14 @@ const LIVE_CHAIN = process.env.ALMONER_CHAIN ?? "BASE-SEPOLIA";
 // synthetic, so on-chain disbursements route to this controlled testnet address.
 const RECIPIENT = process.env.ALMONER_RECIPIENT ?? "0x79fde131eec4fdea04316d75ce1b79040bffb9c5";
 const FIRST_TRANCHE_USDC = 0.1;
-const wallet = new LiveCircleWallet({ cfg: { ...cfg, chain: LIVE_CHAIN }, address: TREASURY, usdcTokenAddress: USDC, policy: policyFromConfig(cfg), clock: () => clock.now() });
+// Wallet mode: "live" does real Circle transfers (needs the `circle` CLI + a
+// logged-in testnet session — local only). "mock" simulates disbursement and is
+// the default for containerized / VPS deploys where the CLI session is absent.
+const WALLET_MODE = (process.env.ALMONER_WALLET ?? "mock").toLowerCase();
+const LIVE = WALLET_MODE === "live";
+const wallet = LIVE
+  ? new LiveCircleWallet({ cfg: { ...cfg, chain: LIVE_CHAIN }, address: TREASURY, usdcTokenAddress: USDC, policy: policyFromConfig(cfg), clock: () => clock.now() })
+  : new MockCircleWallet(policyFromConfig(cfg), () => clock.now());
 const x402 = new MockX402Client();
 
 // ---- portfolio: each runs through the real engine to a target state ----
@@ -179,7 +186,7 @@ function serializeGrant(rec: GrantRecord, seed: number) {
 function snapshot() {
   const grants = store.all().map((r, i) => serializeGrant(r, (i + 1) * 13 + 7));
   const reclaimed = ledger.all().reduce((s, r) => (r.event.type === "FundsReclaimed" ? s + r.event.amount : s), 0);
-  return { grants, meta: { pool: cfg.budget.total_pool, reclaimed, chain: LIVE_CHAIN, gemini: !!geminiMerit, trancheUsdc: FIRST_TRANCHE_USDC } };
+  return { grants, meta: { pool: cfg.budget.total_pool, reclaimed, chain: LIVE_CHAIN, gemini: !!geminiMerit, trancheUsdc: FIRST_TRANCHE_USDC, walletLive: LIVE } };
 }
 
 const LABELS: Record<MeritCriterion, string> = { need: "Need", feasibility: "Feasibility", impact_per_dollar: "Impact / $", plan_clarity: "Plan clarity", local_legitimacy: "Local legitimacy", sdg_alignment: "SDG alignment" };
@@ -246,7 +253,7 @@ createServer(async (req, res) => {
         let rec;
         try {
           rec = await core.intake(app);
-          if (rec.decision) rec.decision.firstTrancheCap = FIRST_TRANCHE_USDC; // cap the real on-chain transfer
+          if (LIVE && rec.decision) rec.decision.firstTrancheCap = FIRST_TRANCHE_USDC; // cap the real on-chain transfer
           if (rec.decision?.kind === "AUTO_APPROVE" && store.get(id).state === "DISBURSE") await core.releaseTranche(id);
         } finally {
           mediaByApp.delete(id);
@@ -258,7 +265,7 @@ createServer(async (req, res) => {
     if (m && req.method === "POST") {
       const [, id, action] = m;
       try {
-        if (action === "cosign") { const gr = store.get(id!); if (gr.decision) gr.decision.firstTrancheCap = FIRST_TRANCHE_USDC; if (gr.state === "AWAIT_APPROVAL") core.approve(id!); if (store.get(id!).state === "DISBURSE") await core.releaseTranche(id!); }
+        if (action === "cosign") { const gr = store.get(id!); if (LIVE && gr.decision) gr.decision.firstTrancheCap = FIRST_TRANCHE_USDC; if (gr.state === "AWAIT_APPROVAL") core.approve(id!); if (store.get(id!).state === "DISBURSE") await core.releaseTranche(id!); }
         else { store.transition(id!, "REJECTED", clock.now(), "operator rejected"); ledger.emit({ type: "GrantRejected", grantId: id!, recipientHash: hash(id!), rationaleHash: hash("operator rejected") }, clock.now()); }
         return json(res, snapshot());
       } catch (e) { return json(res, { error: (e as Error).message }, 400); }
@@ -273,9 +280,13 @@ createServer(async (req, res) => {
   }
 }).listen(port, async () => {
   const snap = snapshot();
-  let bal = "?";
-  try { bal = String(await wallet.balance()); } catch { /* CLI session may be inactive */ }
-  console.log(`\n  Almoner dashboard (LIVE wallet · ${LIVE_CHAIN}) → http://localhost:${port}`);
-  console.log(`  treasury ${TREASURY} · balance ${bal} USDC · every disbursement = ${FIRST_TRANCHE_USDC} USDC real on-chain`);
-  console.log(`  ${snap.grants.length} grants seeded (zero startup transfers) — co-sign or apply to disburse for real\n`);
+  console.log(`\n  Almoner dashboard → http://localhost:${port}  ·  Gemini scoring: ${snap.meta.gemini ? "on" : "off (heuristic)"}`);
+  if (LIVE) {
+    let bal = "?";
+    try { bal = String(await wallet.balance()); } catch { /* CLI session may be inactive */ }
+    console.log(`  LIVE wallet · ${LIVE_CHAIN} · treasury ${TREASURY} · balance ${bal} USDC · each disbursement = ${FIRST_TRANCHE_USDC} USDC real on-chain`);
+  } else {
+    console.log(`  mock wallet (simulated disbursements) — set ALMONER_WALLET=live with a Circle CLI session for real transfers`);
+  }
+  console.log(`  ${snap.grants.length} grants seeded — apply or co-sign to disburse\n`);
 });

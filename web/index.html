@@ -60,7 +60,7 @@ class App extends React.Component {
   componentDidMount(){
     fetch('/api/state').then(r=> r.ok ? r.json() : Promise.reject()).then(d=>{
       if(d && Array.isArray(d.grants) && d.grants.length){
-        this.setState({ grants:d.grants, live:true, pool:(d.meta&&d.meta.pool)||2000, reclaimed:(d.meta&&d.meta.reclaimed)||0, chain:(d.meta&&d.meta.chain)||'BASE-SEPOLIA' });
+        this.setState({ grants:d.grants, live:true, pool:(d.meta&&d.meta.pool)||2000, reclaimed:(d.meta&&d.meta.reclaimed)||0, chain:(d.meta&&d.meta.chain)||'BASE-SEPOLIA', walletLive:!!(d.meta&&d.meta.walletLive) });
       }
     }).catch(()=>{});
   }
@@ -78,6 +78,7 @@ class App extends React.Component {
   explorerBase(){ const c=String(this.state.chain||'BASE-SEPOLIA').toUpperCase();
     return ({'BASE-SEPOLIA':'https://sepolia.basescan.org','BASE':'https://basescan.org','ETH-SEPOLIA':'https://sepolia.etherscan.io','ARB-SEPOLIA':'https://sepolia.arbiscan.io','OP-SEPOLIA':'https://sepolia-optimism.etherscan.io'})[c] || 'https://sepolia.basescan.org'; }
   txLink(full,o){ o=o||{}; if(!full) return '—';
+    if(!this.state.walletLive) return o.text||this.shortTx(full); // mock tx hashes don't resolve on-chain
     return h('a',{href:this.explorerBase()+'/tx/'+full,target:'_blank',rel:'noreferrer',style:{fontFamily:this.MONO,color:o.color||'#2F7A4E',textDecoration:'none',borderBottom:'1px dotted '+(o.color||'#2F7A4E')}}, o.text||this.shortTx(full)); }
 
   M(kind){
@@ -269,7 +270,7 @@ class App extends React.Component {
       r.readAsDataURL(f);
     }))).then(atts=>this.setState(s=>({ applyForm:{...s.applyForm,attachments:atts} }))); }
   removeAtt(i){ this.setState(s=>({ applyForm:{...s.applyForm,attachments:s.applyForm.attachments.filter((_,j)=>j!==i)} })); }
-  refreshState(){ fetch('/api/state').then(r=>r.json()).then(d=>{ if(d&&d.grants) this.setState(s=>({ grants:d.grants, live:true, reclaimed:(d.meta&&d.meta.reclaimed!=null)?d.meta.reclaimed:s.reclaimed, chain:(d.meta&&d.meta.chain)||s.chain })); }).catch(()=>{}); }
+  refreshState(){ fetch('/api/state').then(r=>r.json()).then(d=>{ if(d&&d.grants) this.setState(s=>({ grants:d.grants, live:true, reclaimed:(d.meta&&d.meta.reclaimed!=null)?d.meta.reclaimed:s.reclaimed, chain:(d.meta&&d.meta.chain)||s.chain, walletLive:!!(d.meta&&d.meta.walletLive) })); }).catch(()=>{}); }
   submitApply(){ const f=this.state.applyForm; if(this.state.applyBusy || !String(f.narrative).trim()) return;
     this.setState({ applyBusy:true, applyResult:null });
     fetch('/api/apply',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(f)})
