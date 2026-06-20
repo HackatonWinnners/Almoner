@@ -7,7 +7,8 @@ import { loadConfig } from "./config/loader.js";
 import { Store, type GrantRecord } from "./store/db.js";
 import { Ledger } from "./store/ledger.js";
 import { PolicyEngine } from "./policy/engine.js";
-import { MockCircleWallet, policyFromConfig } from "./tools/circleWallet.js";
+import { policyFromConfig } from "./tools/circleWallet.js";
+import { LiveCircleWallet } from "./tools/circleWalletLive.js";
 import { MockX402Client } from "./tools/x402.js";
 import { MockMeritAssessor, type MeritFixture, type MeritAssessor } from "./agent/scoring.js";
 import { GeminiMeritAssessor } from "./agent/assessors/geminiMerit.js";
@@ -31,7 +32,16 @@ const clock = new FixedClock();
 const store = new Store();
 const ledger = new Ledger();
 const policy = new PolicyEngine(cfg);
-const wallet = new MockCircleWallet(policyFromConfig(cfg), () => clock.now());
+// LIVE wallet mode: every disbursement is a real USDC transfer on Base Sepolia,
+// capped to FIRST_TRANCHE_USDC so it always settles against the testnet balance.
+const TREASURY = process.env.ALMONER_TREASURY ?? "0xd1345b0f3ce28fbc87388bd98e388413e5b81945";
+const USDC = process.env.ALMONER_USDC ?? "0x036cbd53842c5426634e7929541ec2318f3dcf7e";
+const LIVE_CHAIN = process.env.ALMONER_CHAIN ?? "BASE-SEPOLIA";
+// Real transfers need a valid EVM destination — applicant wallet addresses are
+// synthetic, so on-chain disbursements route to this controlled testnet address.
+const RECIPIENT = process.env.ALMONER_RECIPIENT ?? "0x79fde131eec4fdea04316d75ce1b79040bffb9c5";
+const FIRST_TRANCHE_USDC = 0.1;
+const wallet = new LiveCircleWallet({ cfg: { ...cfg, chain: LIVE_CHAIN }, address: TREASURY, usdcTokenAddress: USDC, policy: policyFromConfig(cfg), clock: () => clock.now() });
 const x402 = new MockX402Client();
 
 // ---- portfolio: each runs through the real engine to a target state ----
@@ -46,9 +56,9 @@ const PORTFOLIO: AppDef[] = [
   { key: "p1", program: "WATER", category: "rainwater_harvesting", amount: 450, narrative: "Hand-pump repair serving a 40-household cluster — spare parts plus a certified technician for two days.", walletAge: 214, priorGrants: 2, priorFlags: 0, endorser: true, anchors: [5, 4, 4, 4, 4, 4], risk: {}, target: "pending" },
   { key: "p2", program: "EDU", category: "raised_seedbeds", amount: 500, narrative: "Print run of 300 numeracy workbooks for an after-school program reaching three grades.", walletAge: 96, priorGrants: 0, priorFlags: 0, endorser: true, anchors: [4, 4, 4, 3, 3, 3], risk: { duplicateContent: true }, target: "pending" },
   { key: "p3", program: "HEALTH", category: "tree_nursery", amount: 300, narrative: "Cold-chain carrier for a vaccine outreach covering two villages with no clinic within 12km.", walletAge: 180, priorGrants: 1, priorFlags: 0, endorser: false, anchors: [5, 5, 4, 4, 4, 4], risk: {}, target: "pending" },
-  { key: "p4", program: "ENERGY", category: "rainwater_harvesting", amount: 150, narrative: "Solar lantern restock for a night clinic running on intermittent grid power.", walletAge: 140, priorGrants: 1, priorFlags: 0, endorser: false, anchors: [4, 4, 4, 4, 4, 4], risk: {}, target: "awaitEvidence" },
-  { key: "p5", program: "WATER", category: "rainwater_harvesting", amount: 500, narrative: "Rain catchment tank installed at a primary school of 210 pupils — completed and verified.", walletAge: 260, priorGrants: 3, priorFlags: 0, endorser: true, anchors: [5, 5, 5, 4, 5, 4], risk: {}, target: "complete" },
-  { key: "p6", program: "EDU", category: "tree_nursery", amount: 300, narrative: "Tablet purchase for a digital-literacy pilot — milestone evidence failed authenticity checks.", walletAge: 22, priorGrants: 0, priorFlags: 0, endorser: false, anchors: [4, 3, 3, 3, 2, 3], risk: { duplicateContent: true }, target: "flagged" },
+  { key: "p4", program: "ENERGY", category: "rainwater_harvesting", amount: 130, narrative: "Vague request for 'some lights' with no plan, costs, or beneficiaries named.", walletAge: 60, priorGrants: 0, priorFlags: 0, endorser: false, anchors: [3, 2, 2, 2, 1, 3], risk: {}, target: "rejected" },
+  { key: "p5", program: "WATER", category: "rainwater_harvesting", amount: 500, narrative: "Rain catchment tank for a primary school of 210 pupils — itemized parts, mason quote, and three checkable milestones.", walletAge: 260, priorGrants: 3, priorFlags: 0, endorser: true, anchors: [5, 5, 5, 4, 5, 4], risk: {}, target: "pending" },
+  { key: "p6", program: "EDU", category: "tree_nursery", amount: 300, narrative: "Data top-up request from a wallet inside a tightly-linked cluster.", walletAge: 5, priorGrants: 0, priorFlags: 0, endorser: false, anchors: [4, 3, 3, 3, 2, 3], risk: { duplicateContent: true, sybilCluster: true }, target: "block" },
   { key: "p7", program: "HEALTH", category: "tree_nursery", amount: 250, narrative: "Data top-up request blocked pre-disbursement — wallet sits inside a sybil cluster.", walletAge: 3, priorGrants: 0, priorFlags: 0, endorser: false, anchors: [3, 3, 2, 2, 2, 2], risk: { duplicateContent: true, sybilCluster: true }, target: "block" },
   { key: "p8", program: "FOOD", category: "raised_seedbeds", amount: 120, narrative: "Vague request — 'help with food things'; no costing or measurable milestones.", walletAge: 50, priorGrants: 0, priorFlags: 0, endorser: false, anchors: [3, 2, 2, 3, 1, 3], risk: {}, target: "rejected" },
 ];
@@ -91,7 +101,7 @@ const core = new AgentCore({
 function appFrom(d: AppDef): Application {
   return {
     id: d.key, programId: cfg.program_id,
-    applicant: { id: d.key + "-recipient", displayName: d.program + " applicant", wallet: { address: "0x" + d.key + "wallet", ageDays: d.walletAge, priorGrants: d.priorGrants, priorFlags: d.priorFlags }, ...(d.endorser ? { endorser: { id: d.key + "-endorser", bondUsdc: 50 } } : {}) },
+    applicant: { id: d.key + "-recipient", displayName: d.program + " applicant", wallet: { address: RECIPIENT, ageDays: d.walletAge, priorGrants: d.priorGrants, priorFlags: d.priorFlags }, ...(d.endorser ? { endorser: { id: d.key + "-endorser", bondUsdc: 50 } } : {}) },
     category: d.category, geo: "BD-coastal", requestedAmount: d.amount, narrative: d.narrative,
     milestones: cfg.milestones.map((m) => ({ id: m.id, label: m.label, tranchePct: m.tranche_pct, evidenceRequired: m.evidence })),
     submittedAt: clock.now(),
@@ -138,7 +148,9 @@ function serializeGrant(rec: GrantRecord, seed: number) {
   const failIdx = cfg.milestones.findIndex((m) => rec.verifications.some((v) => v.milestoneId === m.id && v.verdict === "FAIL"));
   const milestones = cfg.milestones.map((m, i) => {
     const tr = rec.tranches.find((t) => t.milestoneId === m.id);
-    const amount = Math.round((rec.application.requestedAmount * m.tranche_pct) / 100);
+    // Released milestones show the REAL on-chain amount (the capped 0.1 USDC);
+    // unreleased ones show the nominal awarded tranche.
+    const amount = tr ? tr.amount : Math.round((rec.application.requestedAmount * m.tranche_pct) / 100);
     let state: string, ev: string[], conf: string | null, tx: string | null;
     if (i === failIdx) { state = "flagged"; ev = ["pass", "partial", "fail", "pending"]; conf = "FAIL"; tx = tr?.txHash ?? null; }
     else if (tr) { state = "released"; ev = ["pass", "pass", "pass", "pass"]; conf = "PASS"; tx = tr.txHash; }
@@ -161,7 +173,7 @@ function serializeGrant(rec: GrantRecord, seed: number) {
 function snapshot() {
   const grants = store.all().map((r, i) => serializeGrant(r, (i + 1) * 13 + 7));
   const reclaimed = ledger.all().reduce((s, r) => (r.event.type === "FundsReclaimed" ? s + r.event.amount : s), 0);
-  return { grants, meta: { pool: cfg.budget.total_pool, reclaimed, chain: cfg.chain, gemini: !!geminiMerit } };
+  return { grants, meta: { pool: cfg.budget.total_pool, reclaimed, chain: LIVE_CHAIN, gemini: !!geminiMerit, trancheUsdc: FIRST_TRANCHE_USDC } };
 }
 
 const LABELS: Record<MeritCriterion, string> = { need: "Need", feasibility: "Feasibility", impact_per_dollar: "Impact / $", plan_clarity: "Plan clarity", local_legitimacy: "Local legitimacy", sdg_alignment: "SDG alignment" };
@@ -202,7 +214,7 @@ createServer(async (req, res) => {
         const category = typeof body.category === "string" && allowed.includes(body.category) ? body.category : allowed[0]!;
         const app: Application = {
           id, programId: cfg.program_id,
-          applicant: { id: id + "-r", displayName: "New applicant", wallet: { address: "0x" + id, ageDays: Math.max(0, Number(body.walletAge) || 90), priorGrants: Math.max(0, Number(body.priorGrants) || 0), priorFlags: 0 }, ...(body.endorser ? { endorser: { id: id + "-e", bondUsdc: 50 } } : {}) },
+          applicant: { id: id + "-r", displayName: "New applicant", wallet: { address: RECIPIENT, ageDays: Math.max(0, Number(body.walletAge) || 90), priorGrants: Math.max(0, Number(body.priorGrants) || 0), priorFlags: 0 }, ...(body.endorser ? { endorser: { id: id + "-e", bondUsdc: 50 } } : {}) },
           category, geo: "BD-coastal", requestedAmount: Math.max(1, Number(body.amount) || 100),
           narrative: String(body.narrative ?? "").slice(0, 2000),
           milestones: cfg.milestones.map((mm) => ({ id: mm.id, label: mm.label, tranchePct: mm.tranche_pct, evidenceRequired: mm.evidence })),
@@ -210,6 +222,7 @@ createServer(async (req, res) => {
         };
         PROGRAM_BY_ID[id] = String(body.program || category).toUpperCase().slice(0, 10);
         const rec = await core.intake(app);
+        if (rec.decision) rec.decision.firstTrancheCap = FIRST_TRANCHE_USDC; // cap the real on-chain transfer
         if (rec.decision?.kind === "AUTO_APPROVE" && store.get(id).state === "DISBURSE") await core.releaseTranche(id);
         return json(res, { grant: serializeGrant(store.get(id), 1000 + n), decision: decisionPayload(store.get(id)) });
       } catch (e) { return json(res, { error: (e as Error).message }, 400); }
@@ -218,7 +231,7 @@ createServer(async (req, res) => {
     if (m && req.method === "POST") {
       const [, id, action] = m;
       try {
-        if (action === "cosign") { if (store.get(id!).state === "AWAIT_APPROVAL") core.approve(id!); if (store.get(id!).state === "DISBURSE") await core.releaseTranche(id!); }
+        if (action === "cosign") { const gr = store.get(id!); if (gr.decision) gr.decision.firstTrancheCap = FIRST_TRANCHE_USDC; if (gr.state === "AWAIT_APPROVAL") core.approve(id!); if (store.get(id!).state === "DISBURSE") await core.releaseTranche(id!); }
         else { store.transition(id!, "REJECTED", clock.now(), "operator rejected"); ledger.emit({ type: "GrantRejected", grantId: id!, recipientHash: hash(id!), rationaleHash: hash("operator rejected") }, clock.now()); }
         return json(res, snapshot());
       } catch (e) { return json(res, { error: (e as Error).message }, 400); }
@@ -231,8 +244,11 @@ createServer(async (req, res) => {
   } catch {
     res.writeHead(404).end("not found");
   }
-}).listen(port, () => {
+}).listen(port, async () => {
   const snap = snapshot();
-  console.log(`\n  Almoner dashboard (LIVE) → http://localhost:${port}`);
-  console.log(`  serving ${snap.grants.length} grants from the real AgentCore · pool $${snap.meta.pool} · reclaimed $${snap.meta.reclaimed}\n`);
+  let bal = "?";
+  try { bal = String(await wallet.balance()); } catch { /* CLI session may be inactive */ }
+  console.log(`\n  Almoner dashboard (LIVE wallet · ${LIVE_CHAIN}) → http://localhost:${port}`);
+  console.log(`  treasury ${TREASURY} · balance ${bal} USDC · every disbursement = ${FIRST_TRANCHE_USDC} USDC real on-chain`);
+  console.log(`  ${snap.grants.length} grants seeded (zero startup transfers) — co-sign or apply to disburse for real\n`);
 });

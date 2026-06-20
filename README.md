@@ -66,8 +66,15 @@ at `GET /api/state`. The dashboard fetches it on load — every merit score, ris
 tier, approval decision, milestone state, tranche tx hash, and the budget math
 come from the real `AgentCore` (the top bar shows **Live · agent**). Co-sign and
 reject `POST` back through the engine: co-signing a grant runs
-`AgentCore.approve` + `releaseTranche` under the `SpendingPolicyGuard`. Only
-presentation labels (program names, evidence-pipeline visuals) are cosmetic.
+`AgentCore.approve` + `releaseTranche` under the `SpendingPolicyGuard`.
+
+**Real on-chain disbursement.** The server runs the **`LiveCircleWallet`** on
+Base Sepolia, so every disbursement (apply auto-approve, or a co-sign) is a
+**real USDC transfer with a live tx hash** — capped to **0.1 USDC** per release so
+it always settles against the testnet balance. The seeded portfolio uses only
+non-disbursing states, so startup moves no funds; you trigger the real transfers
+by applying or co-signing. Set the treasury / token / recipient / chain via
+`ALMONER_TREASURY`, `ALMONER_USDC`, `ALMONER_RECIPIENT`, `ALMONER_CHAIN`.
 Opened as a static file with no server, it falls back to seeded demo data.
 
 > **This is live, not simulated.** `npm run live` disburses real USDC on Base
