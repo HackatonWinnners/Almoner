@@ -1,5 +1,10 @@
-import { initiateDeveloperControlledWalletsClient } from "@circle-fin/developer-controlled-wallets";
+import { createRequire } from "node:module";
 import type { CircleWallet, TransferRequest, TransferReceipt } from "./circleWallet.js";
+
+// The DCW SDK is CommonJS; ESM named-import interop is flaky across Node
+// versions, so load it via createRequire (forces CJS, works everywhere).
+const require = createRequire(import.meta.url);
+const { initiateDeveloperControlledWalletsClient } = require("@circle-fin/developer-controlled-wallets") as typeof import("@circle-fin/developer-controlled-wallets");
 import { SpendingPolicyGuard, type WalletPolicy } from "./spendingGuard.js";
 
 // Circle Developer-Controlled Wallet adapter. Unlike the agent-wallet CLI (which

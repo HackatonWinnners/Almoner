@@ -1,7 +1,11 @@
 import "./loadEnv.js";
-import { initiateDeveloperControlledWalletsClient, registerEntitySecretCiphertext } from "@circle-fin/developer-controlled-wallets";
+import { createRequire } from "node:module";
 import { randomBytes } from "node:crypto";
 import { writeFileSync } from "node:fs";
+
+// DCW SDK is CommonJS — load via createRequire for cross-Node ESM interop.
+const require = createRequire(import.meta.url);
+const { initiateDeveloperControlledWalletsClient, registerEntitySecretCiphertext } = require("@circle-fin/developer-controlled-wallets") as typeof import("@circle-fin/developer-controlled-wallets");
 
 // One-time setup for Circle Developer-Controlled Wallets (the deployable, no-CLI
 // path). Run once with your TEST API key:
