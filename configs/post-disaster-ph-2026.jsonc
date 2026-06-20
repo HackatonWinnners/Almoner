@@ -1,0 +1,53 @@
+{
+  // Second preset — proves the engine is program-agnostic. Same agent, same
+  // code, different config. In the demo, hot-swap to this to show abstraction.
+  "program_id": "post-disaster-ph-2026",
+  "title": "Post-Typhoon Rapid Recovery Microgrants",
+  "country": "Philippines (Visayas)",
+  "sdg_tags": [1, 11, 13],
+  "currency": "USDC",
+  "chain": "ARC-TESTNET",
+
+  "budget": {
+    "total_pool": 3000,
+    "per_grant_cap": 400,
+    "per_recipient_cumulative_cap": 400,
+    "period_cap": { "window": "24h", "amount": 1500 }
+  },
+
+  "eligibility": {
+    "categories": ["roof_repair", "clean_water", "livelihood_restart"],
+    "geo_allow": ["PH-visayas"],
+    "exclude_if": ["duplicate_active_grant", "denylisted_wallet"]
+  },
+
+  "scoring": {
+    "fund_threshold": 55,
+    "weights": {
+      "need": 0.35,
+      "feasibility": 0.20,
+      "impact_per_dollar": 0.15,
+      "plan_clarity": 0.10,
+      "local_legitimacy": 0.10,
+      "sdg_alignment": 0.10
+    }
+  },
+
+  "approval_policy": {
+    "auto_approve_ceiling": 150,
+    "human_review_band": [150, 400],
+    "hard_reject_below_score": 35
+  },
+
+  "risk_policy": {
+    "screening_required": true,
+    "min_wallet_age_days_for_auto": 14,
+    "new_wallet_first_tranche_cap": 80,
+    "require_endorser_above": 250
+  },
+
+  "milestones": [
+    { "id": "m1", "label": "Immediate need addressed", "tranche_pct": 50, "evidence": ["geo_photo", "receipt"] },
+    { "id": "m2", "label": "Recovery completed", "tranche_pct": 50, "evidence": ["geo_photo", "attestation"] }
+  ]
+}

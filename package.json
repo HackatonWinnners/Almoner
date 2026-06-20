@@ -1,0 +1,21 @@
+{
+  "name": "almoner",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Autonomous AI microgrant officer — scores, risk-screens, disburses USDC in tranches under wallet policy, verifies milestones, and keeps a public ledger.",
+  "type": "module",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "demo": "tsx src/index.ts",
+    "demo:disaster": "tsx src/index.ts post-disaster-ph-2026",
+    "typecheck": "tsc --noEmit",
+    "build": "tsc"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "tsx": "^4.19.0",
+    "typescript": "^5.6.0"
+  }
+}

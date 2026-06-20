@@ -1,0 +1,54 @@
+{
+  // One program = one config. Swap this file to repurpose the same agent
+  // for refugees, post-disaster grants, women's co-ops, or data bounties.
+  "program_id": "climate-adapt-bd-2026",
+  "title": "Community Climate Adaptation Microgrants",
+  "country": "Bangladesh (coastal)",
+  "sdg_tags": [1, 13, 16],
+  "currency": "USDC",
+  "chain": "ARC-TESTNET",
+
+  "budget": {
+    "total_pool": 2000,
+    "per_grant_cap": 500,
+    "per_recipient_cumulative_cap": 600,
+    "period_cap": { "window": "24h", "amount": 1000 }
+  },
+
+  "eligibility": {
+    "categories": ["tree_nursery", "rainwater_harvesting", "raised_seedbeds"],
+    "geo_allow": ["BD-coastal"],
+    "exclude_if": ["duplicate_active_grant", "denylisted_wallet"]
+  },
+
+  "scoring": {
+    "fund_threshold": 60,
+    "weights": {
+      "need": 0.25,
+      "feasibility": 0.20,
+      "impact_per_dollar": 0.20,
+      "plan_clarity": 0.15,
+      "local_legitimacy": 0.10,
+      "sdg_alignment": 0.10
+    }
+  },
+
+  "approval_policy": {
+    "auto_approve_ceiling": 200,
+    "human_review_band": [200, 500],
+    "hard_reject_below_score": 40
+  },
+
+  "risk_policy": {
+    "screening_required": true,
+    "min_wallet_age_days_for_auto": 30,
+    "new_wallet_first_tranche_cap": 100,
+    "require_endorser_above": 300
+  },
+
+  "milestones": [
+    { "id": "m1", "label": "Start: materials purchased", "tranche_pct": 40, "evidence": ["receipt", "geo_photo"] },
+    { "id": "m2", "label": "Implementation: planted/installed", "tranche_pct": 40, "evidence": ["geo_photo", "report"] },
+    { "id": "m3", "label": "Outcome: survival/working", "tranche_pct": 20, "evidence": ["geo_photo", "attestation"] }
+  ]
+}
