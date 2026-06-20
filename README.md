@@ -28,7 +28,30 @@ GEMINI_API_KEY=... npm run brain
 
 # REAL USDC tranches on Base Sepolia (needs a Circle CLI testnet session):
 npm run live
+
+# Dashboard (funder / applicant / public-ledger views) → http://localhost:5173
+npm run dashboard
 ```
+
+### Dashboard
+
+`npm run dashboard` serves `web/index.html` — a self-contained React UI (no build
+step, no framework deps; React via CDN) with three role views:
+
+- **Funder** — pool/disbursed/reclaimed/available metrics, budget burndown,
+  wallet-spending-policy caps strip, the operator co-signature queue, and a
+  grants table; click any grant for a full audit-trail drawer (merit breakdown,
+  risk signals, milestone tracker, decision log, co-sign action).
+- **Applicant** — application status, milestone evidence upload + live
+  verification pipeline, tranche history, plus rejected / flagged states with
+  rationale and appeal paths.
+- **Public ledger** — anonymized on-chain event feed (no PII; rationale as hash),
+  filterable by program / event / risk tier.
+
+A kill-switch in the top bar freezes all disbursements. The design came from a
+Claude Design composition (`Almoner.dc.html`); this is its standalone
+implementation. Data is currently seeded in-component — wiring it to the live
+`AgentCore` state is the next step.
 
 > **This is live, not simulated.** `npm run live` disburses real USDC on Base
 > Sepolia through the full pipeline (score → risk → guarded release → verify →

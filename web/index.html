@@ -1,0 +1,694 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Almoner — Autonomous Microgrant Officer</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+  *{box-sizing:border-box;}
+  html,body{margin:0;padding:0;}
+  body{background:#EDEBE4;-webkit-font-smoothing:antialiased;}
+  ::selection{background:#1A1A17;color:#F4F3EE;}
+  table{border-collapse:collapse;}
+  ::-webkit-scrollbar{width:10px;height:10px;}
+  ::-webkit-scrollbar-thumb{background:#D2D0C6;border:3px solid #EDEBE4;}
+  @keyframes alm-pulse{0%,100%{opacity:1;}50%{opacity:.5;}}
+  @keyframes alm-scan{0%{transform:translateX(-100%);}100%{transform:translateX(220%);}}
+  /* hover affordances (the design used a runtime style-hover attr) */
+  .alm-row{cursor:pointer;}
+  .alm-row:hover{background:#F8F7F2 !important;}
+  .alm-cosign:hover{background:#276641 !important;}
+  .alm-reject:hover{background:#F4E6E3 !important;}
+  .alm-open:hover{border-color:#1A1A17 !important;color:#1A1A17 !important;}
+  .alm-ink:hover{background:#000 !important;}
+  .alm-x:hover{border-color:#fff !important;color:#fff !important;}
+</style>
+<script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+<script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+</head>
+<body>
+<div id="root"></div>
+<script>
+const h = React.createElement;
+// Parse a CSS declaration string into a React style object so the design's
+// inline style strings can be reused verbatim.
+function S(str){ const o={}; String(str).split(';').forEach(p=>{ p=p.trim(); if(!p) return; const i=p.indexOf(':'); if(i<0) return; const k=p.slice(0,i).trim().replace(/-([a-z])/g,(_,c)=>c.toUpperCase()); o[k]=p.slice(i+1).trim(); }); return o; }
+
+class App extends React.Component {
+  MONO = "'IBM Plex Mono', ui-monospace, Menlo, monospace";
+  WEIGHTS = [['Need',0.25],['Feasibility',0.20],['Impact / $',0.20],['Plan clarity',0.15],['Local legitimacy',0.10],['SDG alignment',0.10]];
+
+  state = {
+    role: 'funder',
+    paused: false,
+    selectedId: null,
+    appScenario: 'active',
+    appProvided: {},
+    appPhase: 'idle',
+    filters: { program: 'ALL', type: 'ALL', tier: 'ALL' },
+    grants: this.seedGrants(),
+  };
+
+  // ---------- utilities ----------
+  money(n){ if(n==null) return '—'; return '$' + Number(n).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2}); }
+  rng(seed){ let x = seed % 2147483647; if(x<=0) x+=2147483646; return ()=> (x = x*16807 % 2147483647) / 2147483647; }
+  hashFrom(seed,len){ const r=this.rng(seed); const hx='0123456789abcdef'; let s='0x'; for(let i=0;i<len;i++) s+=hx[Math.floor(r()*16)]; return s; }
+  shortHash(f){ return f.slice(0,6)+'…'+f.slice(-4); }
+  shortTx(f){ return f.slice(0,10)+'…'+f.slice(-6); }
+
+  M(kind){
+    const g=this.props.green||'#2F7A4E', a=this.props.amber||'#A9781B', r=this.props.red||'#B23A30';
+    const t={
+      green:['#E7F0E9',g,'#CADCCF'],
+      amber:['#F4ECD9',a,'#E4D3A8'],
+      red:['#F4E6E3',r,'#E2C4BE'],
+      neutral:['#F0EEE7','#6E6D64','#E0DED5'],
+      ink:['#1A1A17','#F4F3EE','#1A1A17'],
+    }[kind] || ['#F0EEE7','#6E6D64','#E0DED5'];
+    return { bg:t[0], fg:t[1], bd:t[2] };
+  }
+  statusKind(s){ return ({COMPLETE:'green',AWAIT_EVIDENCE:'amber',FLAGGED:'red',BLOCK:'red',REJECTED:'red'})[s] || 'neutral'; }
+  tierKind(t){ return ({LOW:'green',MEDIUM:'amber',HIGH:'red',BLOCK:'red'})[t] || 'neutral'; }
+
+  // ---------- element helpers ----------
+  chip(text, kind, o){ o=o||{}; const c=this.M(kind);
+    return h('span',{style:{display:'inline-flex',alignItems:'center',gap:5,padding:o.pad||'3px 8px',fontFamily:this.MONO,fontSize:o.fs||10.5,fontWeight:600,letterSpacing:'0.04em',textTransform:'uppercase',borderRadius:1,border:'1px solid '+c.bd,background:c.bg,color:c.fg,lineHeight:1,whiteSpace:'nowrap'}},
+      o.dot ? h('span',{key:'d',style:{width:6,height:6,background:c.fg,display:'inline-block'}}) : null, text); }
+
+  dot(kind,size){ const c=this.M(kind); return h('span',{style:{width:size||8,height:size||8,background:c.fg,display:'inline-block'}}); }
+
+  bar(pct,kind,o){ o=o||{}; const c=this.M(kind); const col=o.color||c.fg;
+    return h('div',{style:{height:o.h||6,background:o.track||'#E6E4DC',borderRadius:1,overflow:'hidden',width:'100%'}},
+      h('div',{style:{width:Math.max(0,Math.min(100,pct))+'%',height:'100%',background:col}})); }
+
+  meritChip(score){ const k=score>=78?'green':score>=55?'amber':'red'; const c=this.M(k);
+    return h('span',{style:{display:'inline-flex',alignItems:'center',gap:7,fontFamily:this.MONO,fontSize:12,fontWeight:600,color:'#1A1A17'}},
+      h('span',{key:'t',style:{width:36,height:6,background:'#E6E4DC',borderRadius:1,overflow:'hidden',display:'inline-block'}},
+        h('span',{style:{display:'block',width:score+'%',height:'100%',background:c.fg}})),
+      h('span',{key:'n',style:{fontVariantNumeric:'tabular-nums'}}, score)); }
+
+  trancheEl(ms){ const map={released:'green',current:'amber',pending:'neutral',flagged:'red'};
+    return h('div',{style:{display:'flex',gap:4}}, [0,1,2].map(i=>{
+      const st = ms&&ms[i] ? ms[i].state : 'pending'; const c=this.M(map[st]||'neutral');
+      const filled = st==='released'||st==='current'||st==='flagged';
+      return h('span',{key:i,style:{width:23,height:15,display:'inline-flex',alignItems:'center',justifyContent:'center',fontFamily:this.MONO,fontSize:8.5,fontWeight:600,border:'1px solid '+c.bd,background:filled?c.bg:'#fff',color:filled?c.fg:'#BBB9AF'}}, 'm'+(i+1)); })); }
+
+  lifecycle(current){
+    const steps=['INTAKE','SCREEN','SCORE','AWAIT_EVIDENCE','COMPLETE'];
+    const order=steps.indexOf(current);
+    const broke = current==='FLAGGED'||current==='BLOCK'||current==='REJECTED';
+    const kids=[];
+    steps.forEach((s,i)=>{
+      let st='future';
+      if(order>=0){ if(i<order) st='done'; else if(i===order) st='current'; }
+      if(broke && i<=2) st='done';
+      const c = st==='done'?this.M('green'):st==='current'?this.M('ink'):this.M('neutral');
+      kids.push(h('span',{key:s,style:{display:'inline-flex',alignItems:'center',padding:'5px 9px',fontFamily:this.MONO,fontSize:10,fontWeight:600,letterSpacing:'0.04em',border:'1px solid '+(st==='future'?'#E0DED5':c.bd),background:st==='current'?c.bg:(st==='done'?this.M('green').bg:'#fff'),color:st==='current'?c.fg:(st==='done'?this.M('green').fg:'#A8A69C'),borderRadius:1,whiteSpace:'nowrap'}}, s.replace('_',' ')));
+      if(i<steps.length-1) kids.push(h('span',{key:s+'_a',style:{color:'#C8C6BC',padding:'0 5px',fontSize:11}},'→'));
+    });
+    if(broke) kids.push(h('span',{key:'brk',style:{display:'inline-flex',alignItems:'center',marginLeft:8,padding:'5px 9px',fontFamily:this.MONO,fontSize:10,fontWeight:600,letterSpacing:'0.04em',border:'1px solid '+this.M('red').bd,background:this.M('red').bg,color:this.M('red').fg,borderRadius:1}}, '⟂ '+current));
+    return h('div',{style:{display:'flex',alignItems:'center',flexWrap:'wrap',rowGap:6}}, kids); }
+
+  pipeline(stages){
+    const labs=['Completeness','Authenticity','Content match','Confidence'];
+    return h('div',{style:{display:'flex',gap:2}}, labs.map((L,i)=>{
+      const st=stages[i]||'pending';
+      const k = st==='pass'?'green':st==='partial'?'amber':st==='fail'?'red':st==='active'?'ink':'neutral';
+      const c=this.M(k);
+      return h('div',{key:i,style:{flex:1,borderTop:'2px solid '+(st==='pending'?'#E0DED5':c.fg),paddingTop:6}},
+        h('div',{style:{fontFamily:this.MONO,fontSize:8.5,letterSpacing:'0.03em',textTransform:'uppercase',color:st==='pending'?'#A8A69C':c.fg,fontWeight:600}}, L),
+        h('div',{style:{fontFamily:this.MONO,fontSize:9,color:'#9C9A90',marginTop:2}}, st==='pending'?'—':(st==='active'?'checking…':st))); })); }
+
+  confMeter(level){
+    const order=['FAIL','UNCERTAIN','PARTIAL','PASS']; const idx=order.indexOf(level);
+    const k = ({PASS:'green',PARTIAL:'amber',UNCERTAIN:'amber',FAIL:'red'})[level]||'neutral'; const c=this.M(k);
+    return h('div',{style:{display:'flex',alignItems:'center',gap:9}},
+      h('span',{key:'l',style:{fontFamily:this.MONO,fontSize:8.5,letterSpacing:'0.06em',textTransform:'uppercase',color:'#9C9A90'}},'confidence'),
+      h('div',{key:'b',style:{display:'flex',gap:3,flex:1}}, order.map((o,i)=> h('span',{key:o,style:{flex:1,height:7,background:(idx>=0&&i<=idx)?c.fg:'#E6E4DC',borderRadius:1}}))),
+      h('span',{key:'v',style:{fontFamily:this.MONO,fontSize:11,fontWeight:600,color:c.fg,letterSpacing:'0.04em'}}, level||'PENDING')); }
+
+  burndownEl(){
+    const pts=[2000,2000,1880,1880,1720,1720,1560,1460,1320,1240,1180];
+    const W=900,H=70,pad=4,max=2000; const step=(W-pad*2)/(pts.length-1);
+    const x=i=>pad+i*step, y=v=>pad+(1-v/max)*(H-pad*2);
+    let d='M'+x(0)+' '+y(pts[0]); pts.forEach((v,i)=>{ if(i) d+=' L'+x(i)+' '+y(v); });
+    const area=d+' L'+x(pts.length-1)+' '+(H-pad)+' L'+x(0)+' '+(H-pad)+' Z';
+    return h('svg',{viewBox:'0 0 '+W+' '+H,preserveAspectRatio:'none',style:{width:'100%',height:60,display:'block'}},
+      h('path',{key:'a',d:area,fill:this.props.green||'#2F7A4E',opacity:0.08}),
+      h('path',{key:'l',d:d,fill:'none',stroke:this.props.green||'#2F7A4E',strokeWidth:1.5}),
+      h('circle',{key:'c',cx:x(pts.length-1),cy:y(pts[pts.length-1]),r:3,fill:this.props.green||'#2F7A4E'})); }
+
+  // ---------- data ----------
+  makeMs(status,amount,seed,blocked){
+    const pct=[40,40,20]; const amt=pct.map(p=>Math.round(amount*p/100));
+    const base=pct.map((p,i)=>({tag:'M'+(i+1),pct:p,amount:amt[i],state:'pending',ev:['pending','pending','pending','pending'],conf:null,tx:null}));
+    const tx=i=>this.hashFrom(seed*7+i+1,64);
+    if(blocked){ base[0].state='flagged'; base[0].ev=['fail','fail','pending','pending']; base[0].conf='FAIL'; return base; }
+    if(status==='COMPLETE'){ base.forEach((m,i)=>{ m.state='released'; m.ev=['pass','pass','pass','pass']; m.conf='PASS'; m.tx=tx(i); }); }
+    else if(status==='AWAIT_EVIDENCE'){ base[0].state='released'; base[0].ev=['pass','pass','pass','pass']; base[0].conf='PASS'; base[0].tx=tx(0); base[1].state='current'; }
+    else if(status==='FLAGGED'){ base[0].state='released'; base[0].ev=['pass','pass','pass','pass']; base[0].conf='PASS'; base[0].tx=tx(0); base[1].state='flagged'; base[1].ev=['pass','partial','fail','pending']; base[1].conf='FAIL'; }
+    return base;
+  }
+
+  seedGrants(){
+    const defs=[
+      {seed:11,program:'WATER',amount:450,status:'SCORE',cos:true,tier:'LOW',subs:[90,82,86,80,72,74],blurb:'Hand-pump repair serving a 40-household cluster — spare parts plus a certified technician for two days.'},
+      {seed:23,program:'EDU',amount:500,status:'SCORE',cos:true,tier:'MEDIUM',subs:[76,72,74,68,60,66],blurb:'Print run of 300 numeracy workbooks for an after-school program reaching three grades.'},
+      {seed:37,program:'HEALTH',amount:300,status:'SCORE',cos:true,tier:'LOW',subs:[94,88,90,84,82,84],blurb:'Cold-chain carrier for a vaccine outreach covering two villages with no clinic within 12km.'},
+      {seed:41,program:'FOOD',amount:200,status:'AWAIT_EVIDENCE',tier:'MEDIUM',subs:[74,70,70,66,62,60],blurb:'Seed and tool kit for a 12-member growers collective ahead of planting season.'},
+      {seed:53,program:'ENERGY',amount:150,status:'AWAIT_EVIDENCE',tier:'LOW',subs:[82,78,84,74,72,72],blurb:'Solar lantern restock for a night clinic running on intermittent grid power.'},
+      {seed:67,program:'WATER',amount:500,status:'COMPLETE',tier:'LOW',subs:[96,92,90,88,84,86],blurb:'Rain catchment tank installed at a primary school of 210 pupils — completed and verified.'},
+      {seed:71,program:'EDU',amount:350,status:'FLAGGED',tier:'HIGH',subs:[66,62,60,58,54,56],blurb:'Tablet purchase for a digital-literacy pilot — milestone evidence failed authenticity checks.',flag:'duplicate'},
+      {seed:83,program:'FOOD',amount:100,status:'SCREEN',tier:'LOW',subs:[72,68,70,64,60,62],blurb:'Community kitchen gas refill — auto-disbursement band, no operator co-sign required.'},
+      {seed:97,program:'HEALTH',amount:250,status:'FLAGGED',tier:'BLOCK',subs:[58,52,50,48,44,46],blurb:'Data top-up request blocked pre-disbursement — wallet sits inside a sybil cluster.',flag:'sybil',blocked:true},
+    ];
+    return defs.map((d,i)=>{
+      const full=this.hashFrom(d.seed,40);
+      const merit=Math.round(d.subs.reduce((a,s,idx)=> a + s*this.WEIGHTS[idx][1], 0));
+      return { id:'g'+(i+1), seed:d.seed, full, hash:this.shortHash(full), program:d.program, amount:d.amount, status:d.status, needsCosign:!!d.cos, tier:d.tier, subs:d.subs, merit, blurb:d.blurb, flag:d.flag||null, milestones:this.makeMs(d.status,d.amount,d.seed,d.blocked) };
+    });
+  }
+
+  phrase(label,sub){
+    const RAT={
+      'Need':['Acute, unmet need; no alternative provider operating in the catchment.','Genuine need documented, though some services exist nearby.','Need is real but partially served by existing programs.'],
+      'Feasibility':['Concrete plan with named suppliers and a realistic two-week window.','Feasible overall; the procurement timeline is slightly optimistic.','Execution risk concentrated in the sourcing step.'],
+      'Impact / $':['High beneficiary count per dollar relative to the cohort.','Cost-effective and close to the cohort median.','Impact per dollar sits below the cohort median.'],
+      'Plan clarity':['Milestones and line-item budget fully itemized.','Budget is clear but milestone detail is thin.','Plan lacks measurable, checkable milestones.'],
+      'Local legitimacy':['Endorsed by three staked local actors with standing.','One local endorser on record with modest stake.','Limited independent local verification.'],
+      'SDG alignment':['Direct fit to the stated SDG targets.','Partial alignment to the cited SDG.','Weak linkage to any SDG target.'],
+    };
+    const band = sub>=78?0 : sub>=55?1 : 2;
+    return (RAT[label]||['','',''])[band];
+  }
+
+  signalsFor(g){
+    const T=g.tier, dup=g.flag==='duplicate';
+    if(T==='LOW') return [
+      {label:'Wallet age',value:'214 days',kind:'green'},
+      {label:'Sybil cluster',value:'none detected',kind:'green'},
+      {label:'Duplicate content',value:'0% match',kind:'green'},
+      {label:'Endorser stake',value:'3 endorsers · $0 slashed',kind:'green'} ];
+    if(T==='MEDIUM') return [
+      {label:'Wallet age',value:'96 days',kind:'amber'},
+      {label:'Sybil cluster',value:'none detected',kind:'green'},
+      {label:'Duplicate content',value:'11% match',kind:'amber'},
+      {label:'Endorser stake',value:'1 endorser · staked',kind:'amber'} ];
+    if(T==='HIGH') return [
+      {label:'Wallet age',value:'34 days',kind:'amber'},
+      {label:'Sybil cluster',value:'weak link (2 wallets)',kind:'amber'},
+      {label:'Duplicate content',value:dup?'63% match — prior app':'19% match',kind:'red'},
+      {label:'Endorser stake',value:'0 endorsers',kind:'red'} ];
+    return [
+      {label:'Wallet age',value:'4 days',kind:'red'},
+      {label:'Sybil cluster',value:'cluster of 6 wallets',kind:'red'},
+      {label:'Duplicate content',value:'24% match',kind:'amber'},
+      {label:'Endorser stake',value:'0 endorsers',kind:'red'} ];
+  }
+
+  logFor(g){
+    const L=[]; const a='AGENT', o='OPERATOR';
+    L.push({actor:a,action:'GrantCreated',time:'−6d 09:12',rat:'Application received; intake fields complete and well-formed.'});
+    if(g.flag==='sybil') L.push({actor:a,action:'Screen · BLOCK',time:'−6d 09:12',rat:'Originating wallet matches a known sybil cluster; disbursement blocked at screen.'});
+    else L.push({actor:a,action:'Screened',time:'−6d 09:12',rat:'KYC-light and content-policy checks passed.'});
+    L.push({actor:a,action:'RiskAssessed',time:'−6d 09:13',rat:'Composite risk tier '+g.tier+' from wallet age, sybil, duplicate and endorser signals.'});
+    L.push({actor:a,action:'MeritScored',time:'−6d 09:14',rat:'Merit '+g.merit+'/100 across six weighted criteria.'});
+    if(g.needsCosign) L.push({actor:a,action:'AwaitOperator',time:'−5d 16:40',rat:this.money(g.amount)+' falls in the $200–$500 human-review band; co-signature requested.'});
+    if(g.status==='AWAIT_EVIDENCE'){ L.push({actor:o,action:'Co-signed',time:'−5d 10:02',rat:'Operator approved disbursement within wallet caps.'}); L.push({actor:a,action:'TrancheReleased',time:'−5d 10:02',rat:'M1 (40%) released; remaining tranches gate on verified evidence.'}); }
+    if(g.status==='COMPLETE'){ L.push({actor:o,action:'Co-signed',time:'−14d',rat:'Operator approved disbursement.'}); L.push({actor:a,action:'TrancheReleased',time:'−14d',rat:'M1 (40%) released.'}); L.push({actor:a,action:'MilestoneVerified',time:'−9d',rat:'M2 evidence PASS — receipt, geo-photo and report matched.'}); L.push({actor:a,action:'TrancheReleased',time:'−9d',rat:'M2 (40%) released.'}); L.push({actor:a,action:'GrantCompleted',time:'−3d',rat:'M3 verified; final tranche released, grant closed.'}); }
+    if(g.status==='FLAGGED'&&!g.blocked&&g.flag!=='sybil'){ L.push({actor:a,action:'TrancheReleased',time:'−10d',rat:'M1 (40%) released.'}); L.push({actor:a,action:'MilestoneFlagged',time:'−2d 14:20',rat:'M2 evidence failed content match — submitted photo reused from a prior grant.'}); }
+    return L.reverse().map(e=>({ ...e, dotKind: e.action.indexOf('Flag')>=0||e.action.indexOf('BLOCK')>=0?'red': e.actor===o?'amber': (e.action.indexOf('Released')>=0||e.action.indexOf('Completed')>=0||e.action.indexOf('Verified')>=0)?'green':'neutral' }));
+  }
+
+  // ---------- handlers ----------
+  setRole(r){ this.setState({ role:r, selectedId:null }); }
+  openGrant(id){ this.setState({ selectedId:id }); }
+  closeDrawer(){ this.setState({ selectedId:null }); }
+  toggleKill(){ this.setState(s=>({ paused:!s.paused })); }
+  cosign(id){ if(this.state.paused) return; this.setState(s=>({ selectedId: s.selectedId===id?null:s.selectedId, grants: s.grants.map(g=>{ if(g.id!==id) return g; const ms=g.milestones.map(m=>({...m})); ms[0].state='released'; ms[0].ev=['pass','pass','pass','pass']; ms[0].conf='PASS'; ms[0].tx=this.hashFrom(g.seed*7+1,64); ms[1].state='current'; return {...g,status:'AWAIT_EVIDENCE',needsCosign:false,milestones:ms}; }) })); }
+  reject(id){ if(this.state.paused) return; this.setState(s=>({ selectedId: s.selectedId===id?null:s.selectedId, grants: s.grants.map(g=> g.id===id?{...g,status:'REJECTED',needsCosign:false}:g) })); }
+  setApp(sc){ this.setState({ appScenario:sc, appPhase:'idle', appProvided:{} }); }
+  attach(key){ this.setState(s=>({ appProvided:{...s.appProvided,[key]:true} })); }
+  submitEvidence(){ this.setState({ appPhase:'verifying' }); setTimeout(()=>{ this.setState({ appPhase:'verified' }); }, 1700); }
+  setFilter(k,v){ this.setState(s=>({ filters:{...s.filters,[k]:v} })); }
+
+  buildDetail(g){
+    const meritRows=this.WEIGHTS.map((w,i)=>{ const sub=g.subs[i]; const k=sub>=78?'green':sub>=55?'amber':'red';
+      return { label:w[0], weight:w[1].toFixed(2), contribution:(sub*w[1]).toFixed(1), rat:this.phrase(w[0],sub), barEl:this.bar(sub,k,{h:7}) }; });
+    const signals=this.signalsFor(g).map(s=>({ ...s, dotEl:this.dot(s.kind,9) }));
+    const stMap={released:['green','Released'],current:['amber','Awaiting evidence'],pending:['neutral','Locked'],flagged:['red','Flagged']};
+    const milestones=g.milestones.map(m=>{ const sm=stMap[m.state]||stMap.pending;
+      return { tag:m.tag, pct:m.pct+'%', amount:this.money(m.amount), statusChip:this.chip(sm[1],sm[0],{dot:true}), pipelineEl:this.pipeline(m.ev), confEl:this.confMeter(m.conf), released:m.state==='released', txShort:m.tx?this.shortTx(m.tx):'' }; });
+    const log=this.logFor(g).map(e=>({ ...e, actorChip:this.chip(e.actor, e.actor==='OPERATOR'?'amber':'neutral'), dotEl:this.dot(e.dotKind,9) }));
+    const used=g.milestones.filter(m=>m.state==='released').reduce((a,m)=>a+m.amount,0);
+    return {
+      hash:g.hash, program:g.program, amount:this.money(g.amount),
+      statusChip:this.chip(g.status.replace('_',' '), this.statusKind(g.status), {dot:true,fs:11}),
+      tierChip:this.chip(g.tier+' risk', this.tierKind(g.tier), {dot:true,fs:11}),
+      merit:g.merit, capsNote:'Recipient lifetime '+this.money(used)+' / $600.00  ·  per-tx ≤ $500.00  ·  24h period within $1,000.00  ·  pool within $2,000.00',
+      meritRows, signals, milestones, log,
+      needsCosign:g.needsCosign && g.status==='SCORE',
+      firstTranche:this.money(g.milestones[0].amount),
+      onClose:()=>this.closeDrawer(), onCosign:()=>this.cosign(g.id), onReject:()=>this.reject(g.id),
+    };
+  }
+
+  buildApp(){
+    const sc=this.state.appScenario;
+    if(sc==='rejected'){
+      return { scenario:sc, hash:'0x05a7…d12e', program:'EDU', isActive:false, isRejected:true, isFlagged:false,
+        statusChip:this.chip('Not funded','red',{dot:true,fs:11}), statusLine:'Your application was reviewed and declined. The full rationale is on-chain.',
+        lifecycleEl:this.lifecycle('REJECTED'),
+        rejectRationale:'Merit scored 51/100 — below the funding line of 60. The plan lacked measurable milestones and impact-per-dollar fell well under the cohort median. Risk was acceptable; the decision was made on merit alone.',
+        appealSteps:[{n:'1',text:'Add itemized milestones with checkable evidence types for each tranche.'},{n:'2',text:'Attach one staked local endorser to raise local-legitimacy score.'},{n:'3',text:'Resubmit within 30 days — the appeal re-enters scoring, not screening.'}],
+        scenarioSwitch:this.appSwitch() };
+    }
+    if(sc==='flagged'){
+      return { scenario:sc, hash:'0xc3b2…44f9', program:'HEALTH', isActive:false, isRejected:false, isFlagged:true,
+        statusChip:this.chip('Held · flagged','red',{dot:true,fs:11}), statusLine:'Disbursement is paused pending a risk review. No funds are at risk.',
+        lifecycleEl:this.lifecycle('FLAGGED'),
+        flagReason:'Your wallet was grouped with five others showing near-identical activity (a possible sybil cluster). This is automated and may be a false positive.',
+        flagSteps:[{n:'1',text:'Verify ownership by signing the challenge message sent to your wallet.'},{n:'2',text:'Add a staked local endorser who can vouch independently.'},{n:'3',text:'Once cleared, scoring resumes automatically — no need to reapply.'}],
+        scenarioSwitch:this.appSwitch() };
+    }
+    // active — drive off the live AWAIT_EVIDENCE grant (g4 / seed 41)
+    const g=this.state.grants.find(x=>x.seed===41) || this.state.grants[3];
+    const provided=this.state.appProvided, phase=this.state.appPhase;
+    const reqDefs=[['receipt','Receipt / invoice'],['geo','Geo-tagged photo'],['report','Short field report']];
+    const allProvided=reqDefs.every(r=>provided[r[0]]);
+    const reqTypes=reqDefs.map(r=>({ label:r[1], mark: provided[r[0]]?this.dot('green',9):h('span',{style:{width:9,height:9,border:'1px solid #C8C6BC',display:'inline-block'}}),
+      action: provided[r[0]]
+        ? this.chip('attached','green',{fs:9.5})
+        : h('button',{onClick:()=>this.attach(r[0]),style:{background:'#fff',border:'1px solid #1A1A17',color:'#1A1A17',fontFamily:this.MONO,fontSize:10,fontWeight:600,letterSpacing:'0.04em',textTransform:'uppercase',padding:'5px 11px',cursor:'pointer'}},'Attach') }));
+    let verifyBlock;
+    if(phase==='verifying') verifyBlock=h('div',{style:{fontFamily:this.MONO,fontSize:11,color:this.props.amber||'#A9781B',display:'flex',alignItems:'center',gap:8}}, h('span',{style:{width:7,height:7,background:this.props.amber||'#A9781B',display:'inline-block',animation:'alm-pulse 1s infinite'}}), 'Agent verifying evidence — completeness · authenticity · content match…');
+    else if(phase==='verified') verifyBlock=h('div',{style:{display:'flex',flexDirection:'column',gap:9}}, this.pipeline(['pass','pass','pass','pass']), this.confMeter('PASS'), h('div',{style:{fontFamily:this.MONO,fontSize:10.5,color:this.props.green||'#2F7A4E'}},'✓ M2 verified — tranche '+this.money(g.milestones[1].amount)+' released to your wallet.'));
+    else verifyBlock=h('button',{onClick:()=>this.submitEvidence(),disabled:!allProvided,style:{width:'100%',background:allProvided?'#2F7A4E':'#E6E4DC',color:allProvided?'#fff':'#A8A69C',border:'none',fontFamily:this.MONO,fontSize:11,fontWeight:600,letterSpacing:'0.05em',textTransform:'uppercase',padding:11,cursor:allProvided?'pointer':'not-allowed'}}, allProvided?'Submit for verification':'Attach all required evidence to submit');
+
+    const m2done = phase==='verified';
+    const msStMap={released:['green','Released'],current:['amber','Evidence due'],pending:['neutral','Locked'],flagged:['red','Flagged']};
+    const milestones=g.milestones.map((m,i)=>{ let state=m.state; if(i===1 && m2done) state='released'; if(i===2 && m2done) state='current';
+      const sm=msStMap[state]||msStMap.pending;
+      return { tag:m.tag, pct:m.pct+'%', amount:this.money(m.amount), statusChip:this.chip(sm[1],sm[0],{dot:true}),
+        showUploader: i===1 && !m2done, showResult: (i===0) || (i===1 && m2done),
+        locked: i===2 && !m2done,
+        pipelineEl:this.pipeline(i===1?['pass','pass','pass','pass']:m.ev), confEl:this.confMeter(i===1?'PASS':m.conf), txShort:m.tx?this.shortTx(m.tx):(i===1&&m2done?this.shortTx(this.hashFrom(g.seed*7+2,64)):'') }; });
+    const released = g.milestones[0].amount + (m2done? g.milestones[1].amount:0);
+    const history=[{tag:'M1',tx:this.shortTx(g.milestones[0].tx),amount:this.money(g.milestones[0].amount),time:'5d ago'}];
+    if(m2done) history.push({tag:'M2',tx:this.shortTx(this.hashFrom(g.seed*7+2,64)),amount:this.money(g.milestones[1].amount),time:'just now'});
+    return { scenario:sc, hash:g.hash, program:g.program, isActive:true, isRejected:false, isFlagged:false,
+      statusChip:this.chip('Awaiting evidence','amber',{dot:true,fs:11}), statusLine:'M1 released. Submit M2 evidence to unlock the next tranche.',
+      lifecycleEl:this.lifecycle('AWAIT_EVIDENCE'), amount:this.money(g.amount), released:this.money(released), merit:g.merit,
+      milestones, reqTypes, verifyBlock, history, noHistory:false, scenarioSwitch:this.appSwitch() };
+  }
+
+  appSwitch(){ const cur=this.state.appScenario;
+    const opts=[['active','Active'],['rejected','Rejected'],['flagged','Flagged']];
+    return h('div',{style:{display:'flex',border:'1px solid #D9D7CE'}}, opts.map((o,i)=> h('button',{key:o[0],onClick:()=>this.setApp(o[0]),style:{fontFamily:this.MONO,fontSize:10,fontWeight:600,letterSpacing:'0.04em',textTransform:'uppercase',padding:'7px 13px',cursor:'pointer',border:'none',borderLeft:i?'1px solid #E0DED5':'none',background:cur===o[0]?'#1A1A17':'#F4F3EE',color:cur===o[0]?'#F4F3EE':'#6E6D64'}}, o[1]))); }
+
+  roleSwitch(){ const cur=this.state.role;
+    const opts=[['funder','Funder'],['applicant','Applicant'],['ledger','Public ledger']];
+    return h('div',{style:{display:'flex',border:'1px solid #D9D7CE'}}, opts.map((o,i)=> h('button',{key:o[0],onClick:()=>this.setRole(o[0]),style:{fontFamily:this.MONO,fontSize:11,fontWeight:600,letterSpacing:'0.05em',textTransform:'uppercase',padding:'8px 16px',cursor:'pointer',border:'none',borderLeft:i?'1px solid #E0DED5':'none',background:cur===o[0]?'#1A1A17':'transparent',color:cur===o[0]?'#F4F3EE':'#6E6D64'}}, o[1]))); }
+
+  killBtnEl(){ const paused=this.state.paused;
+    if(paused) return h('button',{onClick:()=>this.toggleKill(),style:{display:'flex',alignItems:'center',gap:8,background:'#B23A30',color:'#fff',border:'1px solid #B23A30',fontFamily:this.MONO,fontSize:11,fontWeight:600,letterSpacing:'0.06em',textTransform:'uppercase',padding:'9px 15px',cursor:'pointer'}}, h('span',{style:{width:8,height:8,background:'#fff',animation:'alm-pulse 1s infinite'}}),'Frozen · resume');
+    return h('button',{onClick:()=>this.toggleKill(),style:{display:'flex',alignItems:'center',gap:8,background:'#fff',color:'#B23A30',border:'1.5px solid #B23A30',fontFamily:this.MONO,fontSize:11,fontWeight:600,letterSpacing:'0.06em',textTransform:'uppercase',padding:'8px 15px',cursor:'pointer',position:'relative',overflow:'hidden'},
+      onMouseEnter:e=>{e.currentTarget.style.background='#B23A30';e.currentTarget.style.color='#fff';},
+      onMouseLeave:e=>{e.currentTarget.style.background='#fff';e.currentTarget.style.color='#B23A30';}}, h('span',{style:{fontSize:13,lineHeight:1}},'⏻'),'Pause all');
+  }
+
+  capsMiniEl(){ const used=this.disbursedTotal(); const pct=Math.round(used/2000*100);
+    return h('div',{style:{display:'flex',alignItems:'center',gap:10}},
+      this.chip('under caps','green',{dot:true,fs:9.5}),
+      h('span',{style:{fontFamily:this.MONO,fontSize:10,color:'#8A887E'}},'pool '+pct+'%')); }
+
+  disbursedTotal(){ return this.state.grants.reduce((a,g)=> a + g.milestones.filter(m=>m.state==='released').reduce((x,m)=>x+m.amount,0), 0); }
+
+  buildEvents(){
+    const evs=[]; let id=0; const push=o=>evs.push(Object.assign({id:'e'+(id++)},o));
+    this.state.grants.forEach((g,gi)=>{
+      const base=(gi+1)*220;
+      push({type:'GrantCreated',kind:'neutral',program:g.program,tier:g.tier,recip:g.hash,amount:null,tx:this.hashFrom(g.seed*3,64),rat:this.hashFrom(g.seed*5,40),min:base+50,note:'Intake complete · request '+this.money(g.amount)});
+      push({type:'RiskAssessed',kind:g.tier==='LOW'?'neutral':g.tier==='MEDIUM'?'amber':'red',program:g.program,tier:g.tier,recip:g.hash,amount:null,tx:this.hashFrom(g.seed*4,64),rat:this.hashFrom(g.seed*6,40),min:base+38,note:'Risk tier '+g.tier});
+      g.milestones.forEach((m,mi)=>{
+        if(m.state==='released'){ push({type:'TrancheReleased',kind:'green',program:g.program,tier:g.tier,recip:g.hash,amount:m.amount,tx:m.tx,rat:this.hashFrom(g.seed*9+mi,40),min:base-mi*18,note:m.tag+' · '+m.pct+'% tranche released'}); if(mi>0) push({type:'MilestoneVerified',kind:'green',program:g.program,tier:g.tier,recip:g.hash,amount:null,tx:this.hashFrom(g.seed*11+mi,64),rat:this.hashFrom(g.seed*13+mi,40),min:base-mi*18+4,note:m.tag+' evidence PASS'}); }
+        if(m.state==='flagged'){ push({type:'MilestoneFlagged',kind:'red',program:g.program,tier:g.tier,recip:g.hash,amount:null,tx:this.hashFrom(g.seed*17+mi,64),rat:this.hashFrom(g.seed*19+mi,40),min:base-30,note:m.tag+' evidence FAIL · content match'}); }
+      });
+      if(g.status==='COMPLETE') push({type:'GrantCompleted',kind:'green',program:g.program,tier:g.tier,recip:g.hash,amount:g.amount,tx:this.hashFrom(g.seed*23,64),rat:this.hashFrom(g.seed*29,40),min:base-90,note:'All tranches verified · grant closed'});
+    });
+    push({type:'FundsReclaimed',kind:'amber',program:'EDU',tier:'HIGH',recip:'0x05a7…d12e',amount:210,tx:this.hashFrom(7777,64),rat:this.hashFrom(8888,40),min:60,note:'Milestone failed · unspent tranche returned to pool'});
+    push({type:'ReputationUpdated',kind:'neutral',program:'WATER',tier:'LOW',recip:'0x9f0c…3b88',amount:null,tx:this.hashFrom(9999,64),rat:this.hashFrom(1212,40),min:48,note:'+1 completed grant · endorser stake released'});
+    return evs.sort((a,b)=>a.min-b.min);
+  }
+
+  relTime(min){ if(min<60) return min+'m'; if(min<1440) return Math.round(min/60)+'h'; return Math.round(min/1440)+'d'; }
+
+  renderVals(){
+    const s=this.state;
+    const grants=s.grants;
+    const disbursed=this.disbursedTotal();
+    const reclaimed=210;
+    const m={ pool:this.money(2000), disbursed:this.money(disbursed), disbursedSub:grants.filter(g=>g.milestones.some(x=>x.state==='released')).length+' grants · '+Math.round(disbursed/2000*100)+'% of pool', reclaimed:this.money(reclaimed), available:this.money(2000-disbursed) };
+    const recipMax=Math.max(...grants.map(g=>g.milestones.filter(x=>x.state==='released').reduce((a,x)=>a+x.amount,0)));
+    const txMax=Math.max(0,...grants.flatMap(g=>g.milestones.filter(x=>x.state==='released').map(x=>x.amount)));
+    const capDef=[
+      {label:'Per single tx',cap:500,used:txMax,sub:'max observed '+this.money(txMax),limit:true},
+      {label:'Per recipient',cap:600,used:recipMax,sub:'lifetime · top recipient'},
+      {label:'24h period',cap:1000,used:disbursed,sub:'rolling window'},
+      {label:'Total pool',cap:2000,used:disbursed,sub:'program ceiling'},
+    ];
+    const caps=capDef.map(c=>{ const pct=Math.round(c.used/c.cap*100); const k=c.limit?'ink':(pct>=90?'red':pct>=70?'amber':'green');
+      return { label:c.label, value:c.limit?('≤ '+this.money(c.cap)):(this.money(c.used)+' / '+this.money(c.cap)), sub:c.sub, barEl:this.bar(c.limit?100:pct,k,{h:5}), tag: c.limit?this.chip('guardrail','neutral',{fs:8.5}):this.chip(pct+'%',k,{fs:8.5}) }; });
+
+    const pendingGrants=grants.filter(g=>g.needsCosign && g.status==='SCORE');
+    const pending=pendingGrants.map(g=>({ id:g.id, hash:g.hash, program:g.program, amount:this.money(g.amount),
+      bandChip:this.chip('review','amber',{fs:9.5}), meritChip:this.meritChip(g.merit), riskChip:this.chip(g.tier,this.tierKind(g.tier),{dot:true}),
+      rationale:g.blurb, recipUsed:'$0 / $600', periodNote:this.money(disbursed)+' / $1,000',
+      onCosign:()=>this.cosign(g.id), onReject:()=>this.reject(g.id), onOpen:()=>this.openGrant(g.id) }));
+
+    const rows=grants.map(g=>({ id:g.id, hash:g.hash, programChip:this.chip(g.program,'neutral',{fs:9.5}), amount:this.money(g.amount),
+      statusChip:this.chip(g.status.replace('_',' '),this.statusKind(g.status),{dot:true}), meritChip:this.meritChip(g.merit),
+      riskChip:this.chip(g.tier,this.tierKind(g.tier),{dot:true}), trancheEl:this.trancheEl(g.milestones), onClick:()=>this.openGrant(g.id) }));
+
+    const allEvents=this.buildEvents();
+    const f=s.filters;
+    const filtered=allEvents.filter(e=> (f.program==='ALL'||e.program===f.program) && (f.type==='ALL'||e.type===f.type) && (f.tier==='ALL'||e.tier===f.tier));
+    const ledgerEvents=filtered.map(e=>({ typeChip:this.chip(e.type,e.kind,{fs:9.5}), recip:e.recip, note:e.note, ratHash:this.shortHash(e.rat), amount:e.amount==null?'—':this.money(e.amount), txShort:this.shortTx(e.tx), time:this.relTime(e.min) }));
+    const programs=['ALL'].concat([...new Set(allEvents.map(e=>e.program))]);
+    const types=['ALL','GrantCreated','RiskAssessed','TrancheReleased','MilestoneVerified','MilestoneFlagged','GrantCompleted','FundsReclaimed','ReputationUpdated'];
+    const tiers=['ALL','LOW','MEDIUM','HIGH','BLOCK'];
+    const ledgerFilters=this.buildFilters(programs,types,tiers,f);
+    const fundedMerits=grants.filter(g=>['AWAIT_EVIDENCE','COMPLETE'].includes(g.status)).map(g=>g.merit);
+    const ledgerSummary={ disbursed:this.money(disbursed), grants:grants.filter(g=>g.milestones.some(x=>x.state==='released')).length, rejected:grants.filter(g=>g.status==='REJECTED'||g.status==='FLAGGED').length, reclaimed:this.money(reclaimed), avgMerit: fundedMerits.length?Math.round(fundedMerits.reduce((a,b)=>a+b,0)/fundedMerits.length):'—' };
+
+    const sel=s.selectedId? grants.find(g=>g.id===s.selectedId):null;
+
+    return {
+      isFunder:s.role==='funder', isApplicant:s.role==='applicant', isLedger:s.role==='ledger',
+      roleSwitcher:this.roleSwitch(), killBtn:this.killBtnEl(), capsMini:this.capsMiniEl(), paused:s.paused,
+      m, burndownEl:this.burndownEl(), caps, legendEl:this.lifecycle(null),
+      pending, hasPending:pending.length>0, noPending:pending.length===0,
+      pendingCountChip:this.chip(pending.length+' awaiting', pending.length?'amber':'neutral',{fs:10}),
+      rows, grantCount:grants.length+' active',
+      drawerOpen:!!sel, detail: sel? this.buildDetail(sel): null,
+      app:this.buildApp(),
+      ledgerEvents, ledgerFilters, ledgerCount:filtered.length, ledgerSummary,
+    };
+  }
+
+  buildFilters(programs,types,tiers,f){
+    const sel=(label,opts,val,key)=> h('select',{value:val,onChange:e=>this.setFilter(key,e.target.value),style:{fontFamily:this.MONO,fontSize:10.5,padding:'6px 9px',border:'1px solid #D9D7CE',background:'#fff',color:'#1A1A17',borderRadius:0,cursor:'pointer'}}, opts.map(o=>h('option',{key:o,value:o}, o==='ALL'?label+': all':o)));
+    return h('div',{style:{display:'flex',gap:8}}, sel('Program',programs,f.program,'program'), sel('Event',types,f.type,'type'), sel('Tier',tiers,f.tier,'tier')); }
+
+  // ============================ RENDER ============================
+  renderFunder(v){
+    return h('div',{key:'funder'},
+      // metrics band
+      h('div',{style:S("background:#F4F3EE;border:1px solid #D9D7CE;")},
+        h('div',{style:S("display:flex;")},
+          h('div',{style:S("flex:1;padding:16px 20px;border-right:1px solid #E3E1D8;")},
+            h('div',{style:S("font-size:10px;letter-spacing:0.1em;text-transform:uppercase;color:#6E6D64;")},'Total pool'),
+            h('div',{style:S("font-family:'IBM Plex Mono',monospace;font-size:26px;font-weight:500;margin-top:8px;font-variant-numeric:tabular-nums;")},v.m.pool),
+            h('div',{style:S("font-family:'IBM Plex Mono',monospace;font-size:10px;color:#9C9A90;margin-top:4px;")},'program cap · hard ceiling')),
+          h('div',{style:S("flex:1;padding:16px 20px;border-right:1px solid #E3E1D8;")},
+            h('div',{style:S("font-size:10px;letter-spacing:0.1em;text-transform:uppercase;color:#6E6D64;")},'Disbursed'),
+            h('div',{style:S("font-family:'IBM Plex Mono',monospace;font-size:26px;font-weight:500;margin-top:8px;color:#2F7A4E;font-variant-numeric:tabular-nums;")},v.m.disbursed),
+            h('div',{style:S("font-family:'IBM Plex Mono',monospace;font-size:10px;color:#9C9A90;margin-top:4px;")},v.m.disbursedSub)),
+          h('div',{style:S("flex:1;padding:16px 20px;border-right:1px solid #E3E1D8;")},
+            h('div',{style:S("font-size:10px;letter-spacing:0.1em;text-transform:uppercase;color:#6E6D64;")},'Reclaimed'),
+            h('div',{style:S("font-family:'IBM Plex Mono',monospace;font-size:26px;font-weight:500;margin-top:8px;color:#A9781B;font-variant-numeric:tabular-nums;")},v.m.reclaimed),
+            h('div',{style:S("font-family:'IBM Plex Mono',monospace;font-size:10px;color:#9C9A90;margin-top:4px;")},'failed milestones → pool')),
+          h('div',{style:S("flex:1;padding:16px 20px;")},
+            h('div',{style:S("font-size:10px;letter-spacing:0.1em;text-transform:uppercase;color:#6E6D64;")},'Available'),
+            h('div',{style:S("font-family:'IBM Plex Mono',monospace;font-size:26px;font-weight:500;margin-top:8px;font-variant-numeric:tabular-nums;")},v.m.available),
+            h('div',{style:S("font-family:'IBM Plex Mono',monospace;font-size:10px;color:#9C9A90;margin-top:4px;")},'deployable now'))),
+        h('div',{style:S("border-top:1px solid #E3E1D8;padding:14px 20px 16px;")},
+          h('div',{style:S("display:flex;align-items:baseline;justify-content:space-between;margin-bottom:6px;")},
+            h('div',{style:S("font-size:10px;letter-spacing:0.1em;text-transform:uppercase;color:#6E6D64;")},'Budget burndown · pool depletion'),
+            h('div',{style:S("font-family:'IBM Plex Mono',monospace;font-size:10px;color:#9C9A90;")},'last 10 days')),
+          v.burndownEl)),
+      // caps strip
+      h('div',{style:S("margin-top:14px;background:#F4F3EE;border:1px solid #D9D7CE;display:flex;align-items:stretch;")},
+        h('div',{style:S("padding:14px 18px;border-right:1px solid #E3E1D8;display:flex;flex-direction:column;justify-content:center;min-width:190px;")},
+          h('div',{style:S("font-size:10px;letter-spacing:0.1em;text-transform:uppercase;color:#1A1A17;font-weight:700;")},'Wallet spending policy'),
+          h('div',{style:S("font-family:'IBM Plex Mono',monospace;font-size:10px;color:#8A887E;margin-top:5px;line-height:1.5;")},'every release checked',h('br'),'against hard caps')),
+        v.caps.map((cap,i)=> h('div',{key:i,style:S("flex:1;padding:14px 18px;border-right:1px solid #E3E1D8;")},
+          h('div',{style:S("display:flex;justify-content:space-between;align-items:baseline;")},
+            h('div',{style:S("font-size:10px;letter-spacing:0.08em;text-transform:uppercase;color:#6E6D64;")},cap.label), cap.tag),
+          h('div',{style:S("font-family:'IBM Plex Mono',monospace;font-size:13px;margin:7px 0 8px;font-variant-numeric:tabular-nums;")},cap.value),
+          cap.barEl,
+          h('div',{style:S("font-family:'IBM Plex Mono',monospace;font-size:9px;color:#9C9A90;margin-top:5px;")},cap.sub)))),
+      // pending approvals
+      h('div',{style:S("display:flex;align-items:baseline;gap:12px;margin:30px 0 13px;")},
+        h('div',{style:S("font-size:13px;font-weight:700;letter-spacing:0.02em;text-transform:uppercase;")},'Pending approvals'),
+        h('div',{style:S("font-family:'IBM Plex Mono',monospace;font-size:11px;color:#8A887E;")},'operator co-signature queue · human-review band $200–$500'),
+        h('div',{style:S("margin-left:auto;")}, v.pendingCountChip)),
+      v.hasPending ? h('div',{style:S("display:grid;grid-template-columns:repeat(3,1fr);gap:14px;")},
+        v.pending.map((card,i)=> h('div',{key:i,style:S("background:#fff;border:1px solid #E3E1D8;padding:16px;display:flex;flex-direction:column;gap:12px;")},
+          h('div',{style:S("display:flex;justify-content:space-between;align-items:flex-start;")},
+            h('div',null,
+              h('div',{style:S("font-family:'IBM Plex Mono',monospace;font-size:24px;font-weight:500;line-height:1;font-variant-numeric:tabular-nums;")},card.amount),
+              h('div',{style:S("font-family:'IBM Plex Mono',monospace;font-size:10.5px;color:#8A887E;margin-top:6px;")},card.hash+' · '+card.program)),
+            card.bandChip),
+          h('div',{style:S("display:flex;gap:8px;align-items:center;")},card.meritChip,card.riskChip),
+          h('div',{style:S("font-size:12.5px;line-height:1.45;color:#3A382F;")},card.rationale),
+          h('div',{style:S("font-family:'IBM Plex Mono',monospace;font-size:9.5px;color:#8A887E;border-top:1px dashed #E3E1D8;padding-top:9px;line-height:1.6;")},'✓ within per-tx $500 · recipient '+card.recipUsed+' · period '+card.periodNote),
+          h('div',{style:S("display:flex;gap:8px;margin-top:1px;")},
+            h('button',{onClick:card.onCosign,className:'alm-cosign',style:S("flex:1;background:#2F7A4E;color:#fff;border:1px solid #2F7A4E;font-family:'IBM Plex Mono',monospace;font-size:11px;font-weight:600;letter-spacing:0.04em;text-transform:uppercase;padding:9px;cursor:pointer;border-radius:0;")},'Co-sign'),
+            h('button',{onClick:card.onReject,className:'alm-reject',style:S("flex:1;background:#fff;color:#B23A30;border:1px solid #E2C4BE;font-family:'IBM Plex Mono',monospace;font-size:11px;font-weight:600;letter-spacing:0.04em;text-transform:uppercase;padding:9px;cursor:pointer;border-radius:0;")},'Reject'),
+            h('button',{onClick:card.onOpen,className:'alm-open',style:S("background:#fff;color:#6E6D64;border:1px solid #E3E1D8;font-family:'IBM Plex Mono',monospace;font-size:11px;padding:9px 11px;cursor:pointer;border-radius:0;")},'↳'))))) : null,
+      v.noPending ? h('div',{style:S("background:#fff;border:1px solid #E3E1D8;padding:22px;text-align:center;font-family:'IBM Plex Mono',monospace;font-size:12px;color:#8A887E;")},'▢ Co-signature queue clear — no payments in the human-review band.') : null,
+      // lifecycle legend
+      h('div',{style:S("margin-top:28px;background:#F4F3EE;border:1px solid #D9D7CE;padding:14px 18px;")},
+        h('div',{style:S("display:flex;align-items:center;gap:14px;flex-wrap:wrap;")},
+          h('div',{style:S("font-size:10px;letter-spacing:0.1em;text-transform:uppercase;color:#6E6D64;white-space:nowrap;")},'Grant lifecycle'),
+          v.legendEl)),
+      // grants table
+      h('div',{style:S("display:flex;align-items:baseline;gap:12px;margin:28px 0 12px;")},
+        h('div',{style:S("font-size:13px;font-weight:700;letter-spacing:0.02em;text-transform:uppercase;")},'Grants'),
+        h('div',{style:S("font-family:'IBM Plex Mono',monospace;font-size:11px;color:#8A887E;")},v.grantCount+' · click a row for full audit trail')),
+      h('div',{style:S("background:#fff;border:1px solid #E3E1D8;")},
+        h('table',{style:S("width:100%;font-size:13px;")},
+          h('thead',null, h('tr',{style:S("border-bottom:1px solid #E3E1D8;")},
+            ['Recipient','Program','Amount','Status','Merit','Risk','Tranches',''].map((th,i)=>
+              h('th',{key:i,style:S((i===2?"text-align:right;":"text-align:left;")+"padding:11px "+(i===0?'16px':i===7?'16px':'8px')+";font-size:9.5px;letter-spacing:0.09em;text-transform:uppercase;color:#8A887E;font-weight:600;")},th)))),
+          h('tbody',null, v.rows.map((row)=> h('tr',{key:row.id,onClick:row.onClick,className:'alm-row',style:S("border-bottom:1px solid #F0EEE7;")},
+            h('td',{style:S("padding:12px 16px;font-family:'IBM Plex Mono',monospace;font-size:12.5px;")},row.hash),
+            h('td',{style:S("padding:12px 8px;")},row.programChip),
+            h('td',{style:S("padding:12px 8px;text-align:right;font-family:'IBM Plex Mono',monospace;font-size:13px;font-variant-numeric:tabular-nums;")},row.amount),
+            h('td',{style:S("padding:12px 8px;")},row.statusChip),
+            h('td',{style:S("padding:12px 8px;")},row.meritChip),
+            h('td',{style:S("padding:12px 8px;")},row.riskChip),
+            h('td',{style:S("padding:12px 8px;")},row.trancheEl),
+            h('td',{style:S("padding:12px 16px;text-align:right;color:#C8C6BC;font-size:15px;")},'›')))))));
+  }
+
+  renderApplicant(v){
+    const app=v.app;
+    return h('div',{key:'applicant',style:S("max-width:860px;")},
+      h('div',{style:S("display:flex;align-items:center;justify-content:space-between;gap:16px;margin-bottom:18px;flex-wrap:wrap;")},
+        h('div',null,
+          h('div',{style:S("font-size:13px;font-weight:700;letter-spacing:0.02em;text-transform:uppercase;")},'Your application'),
+          h('div',{style:S("font-family:'IBM Plex Mono',monospace;font-size:11px;color:#8A887E;margin-top:5px;")},'viewing as recipient '+app.hash+' · '+app.program+' program')),
+        app.scenarioSwitch),
+      h('div',{style:S("background:#F4F3EE;border:1px solid #D9D7CE;padding:18px 20px;")},
+        h('div',{style:S("display:flex;align-items:center;gap:12px;margin-bottom:14px;flex-wrap:wrap;")},
+          h('div',{style:S("font-size:10px;letter-spacing:0.1em;text-transform:uppercase;color:#6E6D64;")},'Status'),
+          app.statusChip,
+          h('div',{style:S("font-size:13px;color:#3A382F;")},app.statusLine)),
+        app.lifecycleEl),
+      app.isActive ? this.renderAppActive(app) : null,
+      app.isRejected ? h('div',{style:S("margin-top:16px;background:#fff;border:1px solid #E2C4BE;")},
+        h('div',{style:S("background:#F4E6E3;padding:13px 18px;border-bottom:1px solid #E2C4BE;font-family:'IBM Plex Mono',monospace;font-size:11px;letter-spacing:0.05em;text-transform:uppercase;color:#B23A30;font-weight:600;")},'Application not funded'),
+        h('div',{style:S("padding:18px;")},
+          h('div',{style:S("font-size:10px;letter-spacing:0.08em;text-transform:uppercase;color:#6E6D64;margin-bottom:8px;")},'Decision rationale'),
+          h('div',{style:S("font-size:13.5px;line-height:1.55;color:#3A382F;")},app.rejectRationale),
+          h('div',{style:S("font-size:10px;letter-spacing:0.08em;text-transform:uppercase;color:#6E6D64;margin:18px 0 9px;")},'Appeal path'),
+          h('div',{style:S("display:flex;flex-direction:column;gap:7px;")},
+            app.appealSteps.map((st,i)=> h('div',{key:i,style:S("display:flex;gap:10px;align-items:flex-start;font-size:12.5px;line-height:1.45;color:#3A382F;")},
+              h('span',{style:S("font-family:'IBM Plex Mono',monospace;font-size:11px;color:#A9781B;font-weight:600;margin-top:1px;")},st.n),
+              h('span',null,st.text)))),
+          h('button',{className:'alm-ink',style:S("margin-top:18px;background:#1A1A17;color:#fff;border:none;font-family:'IBM Plex Mono',monospace;font-size:11px;font-weight:600;letter-spacing:0.05em;text-transform:uppercase;padding:11px 18px;cursor:pointer;")},'File appeal →'))) : null,
+      app.isFlagged ? h('div',{style:S("margin-top:16px;background:#fff;border:1px solid #E2C4BE;")},
+        h('div',{style:S("background:#F4E6E3;padding:13px 18px;border-bottom:1px solid #E2C4BE;font-family:'IBM Plex Mono',monospace;font-size:11px;letter-spacing:0.05em;text-transform:uppercase;color:#B23A30;font-weight:600;")},'⚑ Disbursement held — review required'),
+        h('div',{style:S("padding:18px;")},
+          h('div',{style:S("font-size:10px;letter-spacing:0.08em;text-transform:uppercase;color:#6E6D64;margin-bottom:8px;")},'Why this was flagged'),
+          h('div',{style:S("font-size:13.5px;line-height:1.55;color:#3A382F;")},app.flagReason),
+          h('div',{style:S("font-size:10px;letter-spacing:0.08em;text-transform:uppercase;color:#6E6D64;margin:18px 0 9px;")},'Clear next steps'),
+          h('div',{style:S("display:flex;flex-direction:column;gap:7px;")},
+            app.flagSteps.map((st,i)=> h('div',{key:i,style:S("display:flex;gap:10px;align-items:flex-start;font-size:12.5px;line-height:1.45;color:#3A382F;")},
+              h('span',{style:S("font-family:'IBM Plex Mono',monospace;font-size:11px;color:#A9781B;font-weight:600;margin-top:1px;")},st.n),
+              h('span',null,st.text))))) ) : null);
+  }
+
+  renderAppActive(app){
+    return h('div',null,
+      h('div',{style:S("display:flex;gap:14px;margin-top:16px;")},
+        h('div',{style:S("flex:1;background:#fff;border:1px solid #E3E1D8;padding:14px 16px;")},
+          h('div',{style:S("font-size:10px;letter-spacing:0.08em;text-transform:uppercase;color:#6E6D64;")},'Awarded'),
+          h('div',{style:S("font-family:'IBM Plex Mono',monospace;font-size:22px;margin-top:6px;font-variant-numeric:tabular-nums;")},app.amount)),
+        h('div',{style:S("flex:1;background:#fff;border:1px solid #E3E1D8;padding:14px 16px;")},
+          h('div',{style:S("font-size:10px;letter-spacing:0.08em;text-transform:uppercase;color:#6E6D64;")},'Released to date'),
+          h('div',{style:S("font-family:'IBM Plex Mono',monospace;font-size:22px;margin-top:6px;color:#2F7A4E;font-variant-numeric:tabular-nums;")},app.released)),
+        h('div',{style:S("flex:1;background:#fff;border:1px solid #E3E1D8;padding:14px 16px;")},
+          h('div',{style:S("font-size:10px;letter-spacing:0.08em;text-transform:uppercase;color:#6E6D64;")},'Merit score'),
+          h('div',{style:S("font-family:'IBM Plex Mono',monospace;font-size:22px;margin-top:6px;font-variant-numeric:tabular-nums;")},app.merit,h('span',{style:S("font-size:13px;color:#9C9A90;")},'/100')))),
+      h('div',{style:S("font-size:11px;font-weight:700;letter-spacing:0.04em;text-transform:uppercase;margin:24px 0 12px;color:#6E6D64;")},'Milestones & evidence'),
+      h('div',{style:S("display:flex;flex-direction:column;gap:12px;")},
+        app.milestones.map((ms,i)=> h('div',{key:i,style:S("background:#fff;border:1px solid #E3E1D8;padding:16px;")},
+          h('div',{style:S("display:flex;justify-content:space-between;align-items:center;gap:12px;")},
+            h('div',{style:S("display:flex;align-items:center;gap:10px;")},
+              h('div',{style:S("font-family:'IBM Plex Mono',monospace;font-size:13px;font-weight:600;")},ms.tag),
+              h('div',{style:S("font-family:'IBM Plex Mono',monospace;font-size:11px;color:#8A887E;")},ms.pct+' tranche · '+ms.amount)),
+            ms.statusChip),
+          ms.showUploader ? h('div',{style:S("margin-top:14px;border-top:1px solid #F0EEE7;padding-top:14px;")},
+            h('div',{style:S("font-size:10px;letter-spacing:0.08em;text-transform:uppercase;color:#6E6D64;margin-bottom:9px;")},'Required evidence'),
+            h('div',{style:S("display:flex;flex-direction:column;gap:7px;")},
+              app.reqTypes.map((req,j)=> h('div',{key:j,style:S("display:flex;align-items:center;justify-content:space-between;border:1px solid #E3E1D8;padding:9px 12px;")},
+                h('div',{style:S("display:flex;align-items:center;gap:9px;")}, req.mark, h('span',{style:S("font-size:12.5px;")},req.label)),
+                req.action))),
+            h('div',{style:S("margin-top:12px;")},app.verifyBlock)) : null,
+          ms.showResult ? h('div',{style:S("margin-top:14px;border-top:1px solid #F0EEE7;padding-top:14px;")},
+            h('div',{style:S("font-size:10px;letter-spacing:0.08em;text-transform:uppercase;color:#6E6D64;margin-bottom:9px;")},'Verification result'),
+            ms.pipelineEl,
+            h('div',{style:S("margin-top:11px;")},ms.confEl),
+            h('div',{style:S("font-family:'IBM Plex Mono',monospace;font-size:10.5px;color:#8A887E;margin-top:11px;")},'tx '+ms.txShort)) : null,
+          ms.locked ? h('div',{style:S("margin-top:12px;border-top:1px solid #F0EEE7;padding-top:12px;font-family:'IBM Plex Mono',monospace;font-size:10.5px;color:#A19F95;")},'⊘ Locked — unlocks when prior milestone clears verification.') : null))),
+      h('div',{style:S("font-size:11px;font-weight:700;letter-spacing:0.04em;text-transform:uppercase;margin:24px 0 12px;color:#6E6D64;")},'Tranche release history'),
+      h('div',{style:S("background:#fff;border:1px solid #E3E1D8;")},
+        app.history.map((hh,i)=> h('div',{key:i,style:S("display:flex;align-items:center;justify-content:space-between;padding:12px 16px;border-bottom:1px solid #F0EEE7;")},
+          h('div',{style:S("display:flex;align-items:center;gap:12px;")},
+            h('div',{style:S("font-family:'IBM Plex Mono',monospace;font-size:12px;font-weight:600;")},hh.tag),
+            h('div',{style:S("font-family:'IBM Plex Mono',monospace;font-size:11px;color:#8A887E;")},hh.tx)),
+          h('div',{style:S("display:flex;align-items:center;gap:14px;")},
+            h('span',{style:S("font-family:'IBM Plex Mono',monospace;font-size:13px;color:#2F7A4E;font-variant-numeric:tabular-nums;")},hh.amount),
+            h('span',{style:S("font-family:'IBM Plex Mono',monospace;font-size:10px;color:#9C9A90;")},hh.time)))),
+        app.noHistory ? h('div',{style:S("padding:14px 16px;font-family:'IBM Plex Mono',monospace;font-size:11px;color:#9C9A90;")},'No tranches released yet.') : null));
+  }
+
+  renderLedger(v){
+    const ls=v.ledgerSummary;
+    const sumCell=(label,val,color,sub)=> h('div',{style:S("flex:1;background:#F4F3EE;border:1px solid #D9D7CE;padding:15px 18px;")},
+      h('div',{style:S("font-size:10px;letter-spacing:0.08em;text-transform:uppercase;color:#6E6D64;")},label),
+      h('div',{style:S("font-family:'IBM Plex Mono',monospace;font-size:23px;margin-top:6px;"+(color?'color:'+color+';':'')+"font-variant-numeric:tabular-nums;")},val),
+      h('div',{style:S("font-family:'IBM Plex Mono',monospace;font-size:10px;color:#9C9A90;margin-top:3px;")},sub));
+    const hcol=(t,right)=> h('div',{style:S("font-size:9px;letter-spacing:0.08em;text-transform:uppercase;color:#8A887E;font-weight:600;"+(right?'text-align:right;':''))},t);
+    return h('div',{key:'ledger'},
+      h('div',{style:S("display:flex;align-items:flex-end;justify-content:space-between;gap:16px;flex-wrap:wrap;margin-bottom:16px;")},
+        h('div',null,
+          h('div',{style:S("font-size:13px;font-weight:700;letter-spacing:0.02em;text-transform:uppercase;")},'Public ledger'),
+          h('div',{style:S("font-family:'IBM Plex Mono',monospace;font-size:11px;color:#8A887E;margin-top:5px;")},'anonymized on-chain event feed · no PII · rationale stored as hash')),
+        h('div',{style:S("display:flex;align-items:center;gap:8px;font-family:'IBM Plex Mono',monospace;font-size:10px;color:#2F7A4E;")},
+          h('span',{style:S("width:7px;height:7px;background:#2F7A4E;display:inline-block;animation:alm-pulse 2s infinite;")}),
+          '100% of decisions explainable & on-chain')),
+      h('div',{style:S("display:flex;gap:14px;margin-bottom:16px;")},
+        sumCell('Disbursed',ls.disbursed,'#2F7A4E','across '+ls.grants+' grants'),
+        sumCell('Rejected / blocked',ls.rejected,'#B23A30','with on-chain rationale'),
+        sumCell('Reclaimed to pool',ls.reclaimed,'#A9781B','redeployable'),
+        sumCell('Avg merit funded',ls.avgMerit,null,'of 100')),
+      h('div',{style:S("display:flex;align-items:center;gap:10px;background:#F4F3EE;border:1px solid #D9D7CE;padding:11px 16px;flex-wrap:wrap;")},
+        h('span',{style:S("font-size:10px;letter-spacing:0.08em;text-transform:uppercase;color:#6E6D64;")},'Filter'),
+        v.ledgerFilters,
+        h('span',{style:S("margin-left:auto;font-family:'IBM Plex Mono',monospace;font-size:10px;color:#9C9A90;")},v.ledgerCount+' events')),
+      h('div',{style:S("background:#fff;border:1px solid #E3E1D8;border-top:none;")},
+        h('div',{style:S("display:grid;grid-template-columns:150px 110px 1fr 96px 120px 70px;gap:0;padding:9px 16px;border-bottom:1px solid #E3E1D8;background:#FAF9F5;")},
+          hcol('Event'),hcol('Recipient'),hcol('Rationale'),hcol('Amount',true),hcol('Tx'),hcol('Time',true)),
+        v.ledgerEvents.map((ev,i)=> h('div',{key:i,style:S("display:grid;grid-template-columns:150px 110px 1fr 96px 120px 70px;gap:0;padding:11px 16px;border-bottom:1px solid #F4F2EB;align-items:center;")},
+          h('div',null,ev.typeChip),
+          h('div',{style:S("font-family:'IBM Plex Mono',monospace;font-size:11px;")},ev.recip),
+          h('div',{style:S("font-size:12px;color:#3A382F;padding-right:14px;")},ev.note,' ',h('span',{style:S("font-family:'IBM Plex Mono',monospace;font-size:9.5px;color:#B5B3A9;")},'· '+ev.ratHash)),
+          h('div',{style:S("font-family:'IBM Plex Mono',monospace;font-size:12px;text-align:right;font-variant-numeric:tabular-nums;")},ev.amount),
+          h('div',{style:S("font-family:'IBM Plex Mono',monospace;font-size:10.5px;color:#6E6D64;")},ev.txShort),
+          h('div',{style:S("font-family:'IBM Plex Mono',monospace;font-size:10px;color:#9C9A90;text-align:right;")},ev.time)))));
+  }
+
+  renderDrawer(d){
+    return h('div',{key:'drawer'},
+      h('div',{onClick:d.onClose,style:S("position:fixed;inset:0;background:rgba(26,26,23,0.32);z-index:80;")}),
+      h('div',{style:S("position:fixed;top:0;right:0;bottom:0;width:560px;max-width:94vw;background:#F4F3EE;border-left:1px solid #C8C6BC;z-index:81;overflow-y:auto;box-shadow:-12px 0 40px rgba(26,26,23,0.14);")},
+        h('div',{style:S("position:sticky;top:0;background:#1A1A17;color:#F4F3EE;padding:18px 22px;z-index:2;")},
+          h('div',{style:S("display:flex;justify-content:space-between;align-items:flex-start;")},
+            h('div',null,
+              h('div',{style:S("font-family:'IBM Plex Mono',monospace;font-size:10px;letter-spacing:0.08em;color:#9C9A90;text-transform:uppercase;")},'Grant · '+d.program),
+              h('div',{style:S("font-family:'IBM Plex Mono',monospace;font-size:17px;margin-top:6px;letter-spacing:0.01em;")},d.hash)),
+            h('button',{onClick:d.onClose,className:'alm-x',style:S("background:transparent;border:1px solid #45443E;color:#C8C6BC;font-family:'IBM Plex Mono',monospace;font-size:13px;width:30px;height:30px;cursor:pointer;")},'✕')),
+          h('div',{style:S("display:flex;align-items:center;gap:12px;margin-top:14px;")},
+            h('div',{style:S("font-family:'IBM Plex Mono',monospace;font-size:28px;font-weight:500;font-variant-numeric:tabular-nums;")},d.amount), d.statusChip),
+          h('div',{style:S("font-family:'IBM Plex Mono',monospace;font-size:9.5px;color:#9C9A90;margin-top:10px;line-height:1.6;")},d.capsNote)),
+        h('div',{style:S("padding:22px;")},
+          h('div',{style:S("display:flex;align-items:baseline;justify-content:space-between;margin-bottom:12px;")},
+            h('div',{style:S("font-size:11px;font-weight:700;letter-spacing:0.06em;text-transform:uppercase;color:#6E6D64;")},'Merit breakdown'),
+            h('div',{style:S("font-family:'IBM Plex Mono',monospace;font-size:20px;font-weight:500;")},d.merit,h('span',{style:S("font-size:12px;color:#9C9A90;")},'/100'))),
+          h('div',{style:S("display:flex;flex-direction:column;gap:13px;")},
+            d.meritRows.map((mr,i)=> h('div',{key:i},
+              h('div',{style:S("display:flex;align-items:baseline;justify-content:space-between;gap:10px;margin-bottom:5px;")},
+                h('div',{style:S("display:flex;align-items:baseline;gap:8px;")},
+                  h('span',{style:S("font-size:12.5px;font-weight:600;")},mr.label),
+                  h('span',{style:S("font-family:'IBM Plex Mono',monospace;font-size:9.5px;color:#9C9A90;")},'wt '+mr.weight)),
+                h('span',{style:S("font-family:'IBM Plex Mono',monospace;font-size:11px;color:#6E6D64;")},'+'+mr.contribution)),
+              mr.barEl,
+              h('div',{style:S("font-size:11.5px;line-height:1.4;color:#6E6D64;margin-top:5px;")},mr.rat)))),
+          h('div',{style:S("display:flex;align-items:center;justify-content:space-between;margin:26px 0 12px;")},
+            h('div',{style:S("font-size:11px;font-weight:700;letter-spacing:0.06em;text-transform:uppercase;color:#6E6D64;")},'Risk assessment'), d.tierChip),
+          h('div',{style:S("background:#fff;border:1px solid #E3E1D8;")},
+            d.signals.map((sig,i)=> h('div',{key:i,style:S("display:flex;align-items:center;justify-content:space-between;padding:11px 14px;border-bottom:1px solid #F0EEE7;")},
+              h('div',{style:S("display:flex;align-items:center;gap:9px;")}, sig.dotEl, h('span',{style:S("font-size:12.5px;")},sig.label)),
+              h('span',{style:S("font-family:'IBM Plex Mono',monospace;font-size:11.5px;color:#3A382F;")},sig.value)))),
+          h('div',{style:S("font-size:11px;font-weight:700;letter-spacing:0.06em;text-transform:uppercase;color:#6E6D64;margin:26px 0 12px;")},'Milestone tracker'),
+          h('div',{style:S("display:flex;flex-direction:column;gap:11px;")},
+            d.milestones.map((ms,i)=> h('div',{key:i,style:S("background:#fff;border:1px solid #E3E1D8;padding:14px 16px;")},
+              h('div',{style:S("display:flex;align-items:center;justify-content:space-between;margin-bottom:11px;")},
+                h('div',{style:S("display:flex;align-items:center;gap:10px;")},
+                  h('span',{style:S("font-family:'IBM Plex Mono',monospace;font-size:13px;font-weight:600;")},ms.tag),
+                  h('span',{style:S("font-family:'IBM Plex Mono',monospace;font-size:11px;color:#8A887E;")},ms.pct+' · '+ms.amount)),
+                ms.statusChip),
+              ms.pipelineEl,
+              h('div',{style:S("margin-top:11px;")},ms.confEl),
+              ms.released ? h('div',{style:S("font-family:'IBM Plex Mono',monospace;font-size:10px;color:#8A887E;margin-top:11px;border-top:1px dashed #E3E1D8;padding-top:9px;")},'tx '+ms.txShort) : null))),
+          h('div',{style:S("font-size:11px;font-weight:700;letter-spacing:0.06em;text-transform:uppercase;color:#6E6D64;margin:26px 0 12px;")},'Decision log'),
+          h('div',{style:S("position:relative;padding-left:18px;")},
+            h('div',{style:S("position:absolute;left:4px;top:4px;bottom:4px;width:1px;background:#D9D7CE;")}),
+            h('div',{style:S("display:flex;flex-direction:column;gap:15px;")},
+              d.log.map((lg,i)=> h('div',{key:i,style:S("position:relative;")},
+                h('div',{style:S("position:absolute;left:-18px;top:3px;")},lg.dotEl),
+                h('div',{style:S("display:flex;align-items:center;gap:9px;flex-wrap:wrap;")},
+                  lg.actorChip,
+                  h('span',{style:S("font-family:'IBM Plex Mono',monospace;font-size:12px;font-weight:600;")},lg.action),
+                  h('span',{style:S("font-family:'IBM Plex Mono',monospace;font-size:9.5px;color:#9C9A90;")},lg.time)),
+                h('div',{style:S("font-size:12px;line-height:1.45;color:#6E6D64;margin-top:4px;")},lg.rat))))),
+          d.needsCosign ? h('div',{style:S("margin-top:24px;border-top:1px solid #D9D7CE;padding-top:16px;")},
+            h('div',{style:S("font-family:'IBM Plex Mono',monospace;font-size:9.5px;color:#8A887E;margin-bottom:11px;line-height:1.6;")},'✓ Co-signature releases M1 ('+d.firstTranche+') under all wallet caps. Remaining tranches gate on verified evidence.'),
+            h('div',{style:S("display:flex;gap:10px;")},
+              h('button',{onClick:d.onCosign,className:'alm-cosign',style:S("flex:1;background:#2F7A4E;color:#fff;border:none;font-family:'IBM Plex Mono',monospace;font-size:12px;font-weight:600;letter-spacing:0.05em;text-transform:uppercase;padding:12px;cursor:pointer;")},'Co-sign & release M1'),
+              h('button',{onClick:d.onReject,className:'alm-reject',style:S("flex:1;background:#fff;color:#B23A30;border:1px solid #E2C4BE;font-family:'IBM Plex Mono',monospace;font-size:12px;font-weight:600;letter-spacing:0.05em;text-transform:uppercase;padding:12px;cursor:pointer;")},'Reject'))) : null)));
+  }
+
+  render(){
+    const v=this.renderVals();
+    return h('div',{style:S("min-height:100vh;background:#EDEBE4;font-family:'Helvetica Neue',Helvetica,Arial,sans-serif;color:#1A1A17;font-size:14px;")},
+      h('div',{style:S("position:sticky;top:0;z-index:60;background:#F4F3EE;border-bottom:1px solid #D9D7CE;")},
+        h('div',{style:S("max-width:1340px;margin:0 auto;padding:0 26px;height:62px;display:flex;align-items:center;gap:26px;")},
+          h('div',{style:S("display:flex;align-items:center;gap:11px;")},
+            h('div',{style:S("width:22px;height:22px;background:#1A1A17;display:flex;align-items:center;justify-content:center;")},
+              h('div',{style:S("width:8px;height:8px;background:#2F7A4E;")})),
+            h('div',{style:S("display:flex;flex-direction:column;line-height:1;")},
+              h('div',{style:S("font-size:16px;font-weight:700;letter-spacing:-0.01em;")},'Almoner'),
+              h('div',{style:S("font-family:'IBM Plex Mono',monospace;font-size:8.5px;letter-spacing:0.13em;color:#8A887E;margin-top:3px;text-transform:uppercase;")},'Autonomous Microgrant Officer'))),
+          v.roleSwitcher,
+          h('div',{style:S("margin-left:auto;display:flex;align-items:center;gap:18px;")}, v.capsMini, v.killBtn)),
+        v.paused ? h('div',{style:S("background:#B23A30;color:#fff;font-family:'IBM Plex Mono',monospace;font-size:11px;letter-spacing:0.06em;text-align:center;padding:6px;text-transform:uppercase;")},'⊘ Disbursement engine frozen — all releases held. Operator action required to resume.') : null),
+      h('div',{style:S("max-width:1340px;margin:0 auto;padding:26px 26px 80px;")},
+        v.isFunder ? this.renderFunder(v) : null,
+        v.isApplicant ? this.renderApplicant(v) : null,
+        v.isLedger ? this.renderLedger(v) : null),
+      v.drawerOpen ? this.renderDrawer(v.detail) : null);
+  }
+}
+
+ReactDOM.createRoot(document.getElementById('root')).render(h(App,{green:'#2F7A4E',amber:'#A9781B',red:'#B23A30'}));
+</script>
+</body>
+</html>

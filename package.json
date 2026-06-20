@@ -14,6 +14,7 @@
     "brain": "tsx src/brain-demo.ts",
     "brain:disaster": "tsx src/brain-demo.ts post-disaster-ph-2026",
     "live": "tsx src/live-demo.ts",
+    "dashboard": "node web/serve.mjs",
     "typecheck": "tsc --noEmit",
     "build": "tsc"
   },
