@@ -33,6 +33,11 @@ const cfg = loadConfig("climate-adapt-bd-2026");
 // not a fixed taxonomy). Seeded fixtures still drive their own categories.
 cfg.eligibility.categories = ["*"];
 cfg.eligibility.geo_allow = ["*"];
+// ...and the fund's IDENTITY is generic too, so the LLM scores need/impact/SDG
+// on universal humanitarian merit rather than one program's mission/geography.
+cfg.title = "Open Microgrants Fund";
+cfg.country = "any region";
+cfg.sdg_tags = [1, 2, 3, 4, 5, 6, 7, 11, 13, 16];
 const clock = new FixedClock();
 const store = new Store();
 const ledger = new Ledger();

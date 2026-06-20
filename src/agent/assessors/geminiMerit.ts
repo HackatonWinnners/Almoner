@@ -10,17 +10,17 @@ import type { ProgramConfig, MeritCriterion } from "../../types/program.js";
 // part it's good at: judging the text.
 
 const ANCHOR_GUIDE: Record<MeritCriterion, string> = {
-  need: "severity of need — 0 off-topic, 3 relevant, 5 acute direct need central to the program",
+  need: "genuineness + severity of the need ON ITS OWN MERITS, regardless of sector or country — 0 no real need, 3 real need, 5 acute, urgent, unmet need",
   feasibility: "0 unrealistic for the amount, 3 feasible with some stretch, 5 clearly executable",
-  impact_per_dollar: "0 costly for little, 3 reasonable, 5 high impact per dollar",
+  impact_per_dollar: "benefit per dollar for the people helped — 0 costly for little, 3 reasonable, 5 high benefit per dollar",
   plan_clarity: "0 vague, 3 has a plan, 5 concrete steps + milestones + budget",
-  local_legitimacy: "0 no trace, 3 some local presence, 5 staked endorser and/or prior delivery",
-  sdg_alignment: "0 none, 3 partial, 5 direct fit to the program's SDG goals",
+  local_legitimacy: "0 anonymous / no trace, 3 some presence or verifiable context, 5 staked endorser and/or prior delivery",
+  sdg_alignment: "alignment with ANY UN Sustainable Development Goal (no poverty, zero hunger, health, education, gender, clean water, energy, sustainable cities, climate, peace, etc.) — 0 none, 3 partial, 5 strong fit to any SDG",
 };
 
 export class GeminiMeritAssessor implements MeritAssessor {
   private readonly ai: GoogleGenAI;
-  constructor(apiKey: string, private readonly model = "gemini-2.5-flash") {
+  constructor(apiKey: string, private readonly model = process.env.GEMINI_MODEL ?? "gemini-2.5-flash-lite") {
     this.ai = new GoogleGenAI({ apiKey });
   }
 
@@ -28,7 +28,9 @@ export class GeminiMeritAssessor implements MeritAssessor {
     const rubric = CRITERIA.map((c) => `- ${c}: ${ANCHOR_GUIDE[c]}`).join("\n");
     const hasMedia = !!media && media.length > 0;
     const prompt = [
-      `You are the merit officer for the microgrant program "${cfg.title}" (${cfg.country}).`,
+      `You are the merit officer for "${cfg.title}", an OPEN humanitarian microgrant fund.`,
+      `It funds genuine need in ANY sector and ANY country (food, water, health, education, shelter, livelihood, energy, disaster/war relief, climate, etc.).`,
+      `Do NOT penalize an application for its cause, sector, or location — a war-displaced family needing food is just as in-scope as a climate project. Judge each criterion on its own merits.`,
       `Score this application on each criterion with an integer anchor 0–5 and a one-sentence rationale.`,
       "",
       "Criteria & anchors:",
