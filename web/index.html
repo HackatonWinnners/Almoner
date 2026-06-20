@@ -51,6 +51,8 @@ class App extends React.Component {
     filters: { program: 'ALL', type: 'ALL', tier: 'ALL' },
     grants: this.seedGrants(),
     live: false, pool: 2000, reclaimed: 210,
+    applyForm: { amount: 150, category: 'tree_nursery', program: 'WATER', narrative: '', walletAge: 120, priorGrants: 0, endorser: false },
+    applyBusy: false, applyResult: null,
   };
 
   // On load, pull the real AgentCore portfolio from the backend. Falls back to
@@ -254,6 +256,13 @@ class App extends React.Component {
   attach(key){ this.setState(s=>({ appProvided:{...s.appProvided,[key]:true} })); }
   submitEvidence(){ this.setState({ appPhase:'verifying' }); setTimeout(()=>{ this.setState({ appPhase:'verified' }); }, 1700); }
   setFilter(k,v){ this.setState(s=>({ filters:{...s.filters,[k]:v} })); }
+  setForm(k,val){ this.setState(s=>({ applyForm:{...s.applyForm,[k]:val} })); }
+  refreshState(){ fetch('/api/state').then(r=>r.json()).then(d=>{ if(d&&d.grants) this.setState(s=>({ grants:d.grants, live:true, reclaimed:(d.meta&&d.meta.reclaimed!=null)?d.meta.reclaimed:s.reclaimed })); }).catch(()=>{}); }
+  submitApply(){ const f=this.state.applyForm; if(this.state.applyBusy || !String(f.narrative).trim()) return;
+    this.setState({ applyBusy:true, applyResult:null });
+    fetch('/api/apply',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(f)})
+      .then(r=>r.json()).then(d=>{ this.setState({ applyBusy:false, applyResult:d }); if(!d.error) this.refreshState(); })
+      .catch(e=>{ this.setState({ applyBusy:false, applyResult:{error:String(e)} }); }); }
 
   buildDetail(g){
     const meritRows=this.WEIGHTS.map((w,i)=>{ const sub=g.subs[i]; const k=sub>=78?'green':sub>=55?'amber':'red';
@@ -330,7 +339,7 @@ class App extends React.Component {
     return h('div',{style:{display:'flex',border:'1px solid #D9D7CE'}}, opts.map((o,i)=> h('button',{key:o[0],onClick:()=>this.setApp(o[0]),style:{fontFamily:this.MONO,fontSize:10,fontWeight:600,letterSpacing:'0.04em',textTransform:'uppercase',padding:'7px 13px',cursor:'pointer',border:'none',borderLeft:i?'1px solid #E0DED5':'none',background:cur===o[0]?'#1A1A17':'#F4F3EE',color:cur===o[0]?'#F4F3EE':'#6E6D64'}}, o[1]))); }
 
   roleSwitch(){ const cur=this.state.role;
-    const opts=[['funder','Funder'],['applicant','Applicant'],['ledger','Public ledger']];
+    const opts=[['funder','Funder'],['apply','Apply'],['applicant','Applicant'],['ledger','Public ledger']];
     return h('div',{style:{display:'flex',border:'1px solid #D9D7CE'}}, opts.map((o,i)=> h('button',{key:o[0],onClick:()=>this.setRole(o[0]),style:{fontFamily:this.MONO,fontSize:11,fontWeight:600,letterSpacing:'0.05em',textTransform:'uppercase',padding:'8px 16px',cursor:'pointer',border:'none',borderLeft:i?'1px solid #E0DED5':'none',background:cur===o[0]?'#1A1A17':'transparent',color:cur===o[0]?'#F4F3EE':'#6E6D64'}}, o[1]))); }
 
   killBtnEl(){ const paused=this.state.paused;
@@ -408,7 +417,7 @@ class App extends React.Component {
     const sel=s.selectedId? grants.find(g=>g.id===s.selectedId):null;
 
     return {
-      isFunder:s.role==='funder', isApplicant:s.role==='applicant', isLedger:s.role==='ledger',
+      isFunder:s.role==='funder', isApplicant:s.role==='applicant', isLedger:s.role==='ledger', isApply:s.role==='apply',
       roleSwitcher:this.roleSwitch(), killBtn:this.killBtnEl(), capsMini:this.capsMiniEl(), paused:s.paused,
       m, burndownEl:this.burndownEl(), caps, legendEl:this.lifecycle(null),
       pending, hasPending:pending.length>0, noPending:pending.length===0,
@@ -626,6 +635,53 @@ class App extends React.Component {
           h('div',{style:S("font-family:'IBM Plex Mono',monospace;font-size:10px;color:#9C9A90;text-align:right;")},ev.time)))));
   }
 
+  renderApply(v){
+    const f=this.state.applyForm, busy=this.state.applyBusy, res=this.state.applyResult;
+    const cats=[['tree_nursery','Tree nursery'],['rainwater_harvesting','Rainwater harvesting'],['raised_seedbeds','Raised seedbeds']];
+    const istyle=S("font-family:'IBM Plex Mono',monospace;font-size:13px;padding:9px 11px;border:1px solid #D9D7CE;background:#fff;color:#1A1A17;border-radius:0;width:100%;");
+    const field=(t,el)=>h('div',{style:S("display:flex;flex-direction:column;gap:6px;")}, h('label',{style:S("font-size:10px;letter-spacing:0.08em;text-transform:uppercase;color:#6E6D64;")},t), el);
+    const canSubmit = !busy && String(f.narrative).trim().length>0;
+    return h('div',{key:'apply',style:S("max-width:760px;")},
+      h('div',{style:S("margin-bottom:18px;")},
+        h('div',{style:S("font-size:13px;font-weight:700;letter-spacing:0.02em;text-transform:uppercase;")},'Apply for a microgrant'),
+        h('div',{style:S("font-family:'IBM Plex Mono',monospace;font-size:11px;color:#8A887E;margin-top:5px;")}, v.live?'the agent reads your narrative, scores six criteria, risk-screens and decides — live':'start the server (npm run dashboard) for live agent scoring')),
+      h('div',{style:S("background:#F4F3EE;border:1px solid #D9D7CE;padding:20px;display:flex;flex-direction:column;gap:14px;")},
+        h('div',{style:S("display:grid;grid-template-columns:1fr 1fr;gap:14px;")},
+          field('Amount (USDC)', h('input',{type:'number',min:1,value:f.amount,onChange:e=>this.setForm('amount',e.target.value),style:istyle})),
+          field('Category', h('select',{value:f.category,onChange:e=>this.setForm('category',e.target.value),style:istyle}, cats.map(c=>h('option',{key:c[0],value:c[0]},c[1])))),
+          field('Program label', h('input',{value:f.program,onChange:e=>this.setForm('program',e.target.value),style:istyle})),
+          field('Wallet age (days)', h('input',{type:'number',min:0,value:f.walletAge,onChange:e=>this.setForm('walletAge',e.target.value),style:istyle}))),
+        field('Plan / narrative — the need, your plan, itemized costs, milestones', h('textarea',{value:f.narrative,onChange:e=>this.setForm('narrative',e.target.value),rows:5,placeholder:'e.g. Repair the village handpump serving 40 households. $90 parts + $60 two-day certified technician. m1 buy parts, m2 install, m3 30-day flow test…',style:S("font-family:'IBM Plex Mono',monospace;font-size:12.5px;line-height:1.5;padding:11px;border:1px solid #D9D7CE;background:#fff;color:#1A1A17;border-radius:0;width:100%;resize:vertical;")})),
+        h('label',{style:S("display:flex;align-items:center;gap:9px;font-size:12.5px;color:#3A382F;cursor:pointer;")}, h('input',{type:'checkbox',checked:f.endorser,onChange:e=>this.setForm('endorser',e.target.checked)}), 'Staked local endorser vouches for this application'),
+        h('button',{onClick:()=>this.submitApply(),disabled:!canSubmit,style:S("background:"+(canSubmit?'#1A1A17':'#E6E4DC')+";color:"+(canSubmit?'#fff':'#A8A69C')+";border:none;font-family:'IBM Plex Mono',monospace;font-size:12px;font-weight:600;letter-spacing:0.05em;text-transform:uppercase;padding:13px;cursor:"+(canSubmit?'pointer':'not-allowed')+";")}, busy?'Agent scoring your application…':'Submit to the agent')),
+      busy ? h('div',{style:S("margin-top:16px;display:flex;align-items:center;gap:9px;font-family:'IBM Plex Mono',monospace;font-size:11.5px;color:#A9781B;")}, h('span',{style:S("width:8px;height:8px;background:#A9781B;display:inline-block;animation:alm-pulse 1s infinite;")}),'Reading the narrative · scoring six criteria · risk screening…') : null,
+      (res && res.error) ? h('div',{style:S("margin-top:16px;background:#F4E6E3;border:1px solid #E2C4BE;padding:14px;font-family:'IBM Plex Mono',monospace;font-size:12px;color:#B23A30;")},'Error: '+res.error) : null,
+      (res && res.decision) ? this.renderDecision(res) : null);
+  }
+
+  renderDecision(res){
+    const d=res.decision; const kind=d.kind;
+    const k = kind==='AUTO_APPROVE'?'green':kind==='QUEUE_HUMAN'?'amber':'red'; const c=this.M(k);
+    const title = kind==='AUTO_APPROVE'?'Approved — first tranche released':kind==='QUEUE_HUMAN'?'Provisionally approved — awaiting operator co-signature':'Not funded';
+    return h('div',{style:S("margin-top:18px;background:#fff;border:1px solid #E3E1D8;")},
+      h('div',{style:S("background:"+c.bg+";border-bottom:1px solid "+c.bd+";padding:15px 18px;display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;")},
+        h('div',{style:S("display:flex;align-items:center;gap:11px;")}, this.dot(k,10), h('div',{style:S("font-family:'IBM Plex Mono',monospace;font-size:13px;font-weight:600;letter-spacing:0.03em;text-transform:uppercase;color:"+c.fg+";")},title)),
+        h('div',{style:S("display:flex;align-items:center;gap:10px;")}, this.meritChip(d.merit.score), this.chip(d.risk.tier+' risk',this.tierKind(d.risk.tier),{dot:true}))),
+      h('div',{style:S("padding:18px;")},
+        h('div',{style:S("font-size:13px;line-height:1.5;color:#3A382F;margin-bottom:18px;")}, d.rationale),
+        h('div',{style:S("font-size:11px;font-weight:700;letter-spacing:0.06em;text-transform:uppercase;color:#6E6D64;margin-bottom:12px;")},'Merit breakdown · '+d.merit.score+'/100 (fund line '+d.merit.threshold+')'),
+        h('div',{style:S("display:flex;flex-direction:column;gap:12px;")}, d.merit.rows.map((r,i)=>{ const rk=r.pct>=78?'green':r.pct>=55?'amber':'red';
+          return h('div',{key:i},
+            h('div',{style:S("display:flex;justify-content:space-between;align-items:baseline;margin-bottom:5px;")},
+              h('div',{style:S("display:flex;align-items:baseline;gap:8px;")}, h('span',{style:S("font-size:12.5px;font-weight:600;")},r.label), h('span',{style:S("font-family:'IBM Plex Mono',monospace;font-size:9.5px;color:#9C9A90;")},'wt '+r.weight)),
+              h('span',{style:S("font-family:'IBM Plex Mono',monospace;font-size:11px;color:#6E6D64;")}, r.anchor+'/5')),
+            this.bar(r.pct,rk,{h:7}),
+            h('div',{style:S("font-size:11.5px;line-height:1.4;color:#6E6D64;margin-top:5px;")}, r.rationale)); })),
+        h('div',{style:S("font-size:11px;font-weight:700;letter-spacing:0.06em;text-transform:uppercase;color:#6E6D64;margin:22px 0 12px;")},'Risk signals · '+d.risk.score+'/100'),
+        d.risk.signals.length ? h('div',{style:S("background:#FAF9F5;border:1px solid #E3E1D8;")}, d.risk.signals.map((s,i)=> h('div',{key:i,style:S("display:flex;align-items:center;justify-content:space-between;gap:12px;padding:10px 14px;border-bottom:1px solid #F0EEE7;")}, h('span',{style:S("font-family:'IBM Plex Mono',monospace;font-size:11.5px;color:#3A382F;")},s.signal), h('span',{style:S("font-size:11.5px;color:#6E6D64;text-align:right;")},s.detail)))) : h('div',{style:S("font-family:'IBM Plex Mono',monospace;font-size:11px;color:#9C9A90;")},'no adverse signals'),
+        (kind!=='REJECT') ? h('div',{style:S("margin-top:18px;border-top:1px dashed #E3E1D8;padding-top:14px;font-family:'IBM Plex Mono',monospace;font-size:10.5px;color:#8A887E;line-height:1.6;")}, '↳ Now in the Funder dashboard'+(kind==='QUEUE_HUMAN'?' co-signature queue':'')+' and the Public ledger.'+(d.disbursed>0?(' First tranche '+this.money(d.disbursed)+' released.'):'')) : null));
+  }
+
   renderDrawer(d){
     return h('div',{key:'drawer'},
       h('div',{onClick:d.onClose,style:S("position:fixed;inset:0;background:rgba(26,26,23,0.32);z-index:80;")}),
@@ -703,6 +759,7 @@ class App extends React.Component {
         v.paused ? h('div',{style:S("background:#B23A30;color:#fff;font-family:'IBM Plex Mono',monospace;font-size:11px;letter-spacing:0.06em;text-align:center;padding:6px;text-transform:uppercase;")},'⊘ Disbursement engine frozen — all releases held. Operator action required to resume.') : null),
       h('div',{style:S("max-width:1340px;margin:0 auto;padding:26px 26px 80px;")},
         v.isFunder ? this.renderFunder(v) : null,
+        v.isApply ? this.renderApply(v) : null,
         v.isApplicant ? this.renderApplicant(v) : null,
         v.isLedger ? this.renderLedger(v) : null),
       v.drawerOpen ? this.renderDrawer(v.detail) : null);

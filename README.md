@@ -38,6 +38,13 @@ npm run dashboard
 `npm run dashboard` serves `web/index.html` — a self-contained React UI (no build
 step, no framework deps; React via CDN) with three role views:
 
+- **Apply** — a real application form. Submitting `POST`s to `/api/apply`, which
+  runs `AgentCore.intake`: **Gemini reads the narrative** and scores the six merit
+  criteria (with per-criterion rationale), risk-screens the wallet, and the policy
+  decides — **auto-approve + disburse** (< $200, merit ≥ 60, low risk),
+  **queue for operator co-sign** ($200–$500), or **reject** — shown live. Approved
+  grants immediately appear in the funder view and ledger. (Falls back to a
+  heuristic score if no `GEMINI_API_KEY`.)
 - **Funder** — pool/disbursed/reclaimed/available metrics, budget burndown,
   wallet-spending-policy caps strip, the operator co-signature queue, and a
   grants table; click any grant for a full audit-trail drawer (merit breakdown,

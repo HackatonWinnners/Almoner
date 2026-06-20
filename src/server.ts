@@ -9,7 +9,8 @@ import { Ledger } from "./store/ledger.js";
 import { PolicyEngine } from "./policy/engine.js";
 import { MockCircleWallet, policyFromConfig } from "./tools/circleWallet.js";
 import { MockX402Client } from "./tools/x402.js";
-import { MockMeritAssessor, type MeritFixture } from "./agent/scoring.js";
+import { MockMeritAssessor, type MeritFixture, type MeritAssessor } from "./agent/scoring.js";
+import { GeminiMeritAssessor } from "./agent/assessors/geminiMerit.js";
 import { RiskScorer, type RiskFixture } from "./agent/risk.js";
 import { EvidenceVerifier } from "./agent/verify.js";
 import { FixedClock } from "./agent/clock.js";
@@ -62,9 +63,26 @@ for (const d of PORTFOLIO) {
   riskFixtures[d.key] = d.risk;
 }
 
+// Merit scoring: seeded portfolio uses deterministic fixtures (fast, no LLM at
+// startup); freshly-submitted applications (no fixture) are read & scored by
+// Gemini, with a heuristic fallback if the key is missing or the call fails.
+const GEMINI_KEY = process.env.GEMINI_API_KEY ?? process.env.GOOGLE_API_KEY;
+const mockMerit = new MockMeritAssessor(meritFixtures);
+const geminiMerit = GEMINI_KEY ? new GeminiMeritAssessor(GEMINI_KEY) : null;
+const merit: MeritAssessor = {
+  async assess(app, c) {
+    if (meritFixtures[app.id] || !geminiMerit) return mockMerit.assess(app, c);
+    try {
+      return await geminiMerit.assess(app, c);
+    } catch (e) {
+      console.warn("[apply] Gemini merit failed, using heuristic:", (e as Error).message);
+      return mockMerit.assess(app, c);
+    }
+  },
+};
+
 const core = new AgentCore({
-  cfg, store, ledger, wallet, policy,
-  merit: new MockMeritAssessor(meritFixtures),
+  cfg, store, ledger, wallet, policy, merit,
   risk: new RiskScorer(x402, riskFixtures),
   verifier: new EvidenceVerifier(x402),
   clock,
@@ -143,8 +161,25 @@ function serializeGrant(rec: GrantRecord, seed: number) {
 function snapshot() {
   const grants = store.all().map((r, i) => serializeGrant(r, (i + 1) * 13 + 7));
   const reclaimed = ledger.all().reduce((s, r) => (r.event.type === "FundsReclaimed" ? s + r.event.amount : s), 0);
-  return { grants, meta: { pool: cfg.budget.total_pool, reclaimed, chain: cfg.chain } };
+  return { grants, meta: { pool: cfg.budget.total_pool, reclaimed, chain: cfg.chain, gemini: !!geminiMerit } };
 }
+
+const LABELS: Record<MeritCriterion, string> = { need: "Need", feasibility: "Feasibility", impact_per_dollar: "Impact / $", plan_clarity: "Plan clarity", local_legitimacy: "Local legitimacy", sdg_alignment: "SDG alignment" };
+
+function decisionPayload(rec: GrantRecord) {
+  const dec = rec.decision!;
+  return {
+    kind: dec.kind, status: statusOf(rec), rationale: dec.rationale, disbursed: rec.disbursedTotal,
+    merit: { score: dec.merit.score, threshold: cfg.scoring.fund_threshold, rows: dec.merit.breakdown.map((b) => ({ label: LABELS[b.criterion], anchor: b.anchor, pct: Math.round((b.anchor / 5) * 100), weight: b.weight.toFixed(2), rationale: b.rationale })) },
+    risk: { score: dec.risk.score, tier: dec.risk.tier, sanctioned: dec.risk.sanctioned, signals: dec.risk.signals.map((s) => ({ signal: s.signal, detail: s.detail })) },
+  };
+}
+
+function readBody(req: import("node:http").IncomingMessage): Promise<string> {
+  return new Promise((resolve) => { let d = ""; req.on("data", (c) => (d += c)); req.on("end", () => resolve(d)); });
+}
+
+let applyCounter = 0;
 
 // ---- HTTP ----
 const dir = join(dirname(fileURLToPath(import.meta.url)), "..", "web");
@@ -158,6 +193,27 @@ createServer(async (req, res) => {
   const url = (req.url ?? "/").split("?")[0] ?? "/";
   try {
     if (url === "/api/state") return json(res, snapshot());
+    if (url === "/api/apply" && req.method === "POST") {
+      try {
+        const body = JSON.parse((await readBody(req)) || "{}") as Record<string, unknown>;
+        const n = ++applyCounter;
+        const id = "apply-" + n;
+        const allowed = cfg.eligibility.categories;
+        const category = typeof body.category === "string" && allowed.includes(body.category) ? body.category : allowed[0]!;
+        const app: Application = {
+          id, programId: cfg.program_id,
+          applicant: { id: id + "-r", displayName: "New applicant", wallet: { address: "0x" + id, ageDays: Math.max(0, Number(body.walletAge) || 90), priorGrants: Math.max(0, Number(body.priorGrants) || 0), priorFlags: 0 }, ...(body.endorser ? { endorser: { id: id + "-e", bondUsdc: 50 } } : {}) },
+          category, geo: "BD-coastal", requestedAmount: Math.max(1, Number(body.amount) || 100),
+          narrative: String(body.narrative ?? "").slice(0, 2000),
+          milestones: cfg.milestones.map((mm) => ({ id: mm.id, label: mm.label, tranchePct: mm.tranche_pct, evidenceRequired: mm.evidence })),
+          submittedAt: clock.now(),
+        };
+        PROGRAM_BY_ID[id] = String(body.program || category).toUpperCase().slice(0, 10);
+        const rec = await core.intake(app);
+        if (rec.decision?.kind === "AUTO_APPROVE" && store.get(id).state === "DISBURSE") await core.releaseTranche(id);
+        return json(res, { grant: serializeGrant(store.get(id), 1000 + n), decision: decisionPayload(store.get(id)) });
+      } catch (e) { return json(res, { error: (e as Error).message }, 400); }
+    }
     const m = url.match(/^\/api\/grants\/([^/]+)\/(cosign|reject)$/);
     if (m && req.method === "POST") {
       const [, id, action] = m;
