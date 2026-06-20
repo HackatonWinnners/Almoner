@@ -78,7 +78,7 @@ class App extends React.Component {
   explorerBase(){ const c=String(this.state.chain||'BASE-SEPOLIA').toUpperCase();
     return ({'BASE-SEPOLIA':'https://sepolia.basescan.org','BASE':'https://basescan.org','ETH-SEPOLIA':'https://sepolia.etherscan.io','ARB-SEPOLIA':'https://sepolia.arbiscan.io','OP-SEPOLIA':'https://sepolia-optimism.etherscan.io'})[c] || 'https://sepolia.basescan.org'; }
   txLink(full,o){ o=o||{}; if(!full) return '—';
-    if(!this.state.walletLive) return o.text||this.shortTx(full); // mock tx hashes don't resolve on-chain
+    if(!this.state.walletLive) return (o.text||this.shortTx(full))+' (demo)'; // mock hash — not a real on-chain tx
     return h('a',{href:this.explorerBase()+'/tx/'+full,target:'_blank',rel:'noreferrer',style:{fontFamily:this.MONO,color:o.color||'#2F7A4E',textDecoration:'none',borderBottom:'1px dotted '+(o.color||'#2F7A4E')}}, o.text||this.shortTx(full)); }
 
   M(kind){
@@ -610,7 +610,7 @@ class App extends React.Component {
           h('div',{style:S("display:flex;align-items:center;gap:12px;flex-wrap:wrap;")},
             h('div',{style:S("font-family:'IBM Plex Mono',monospace;font-size:12px;font-weight:600;")},hh.tag),
             this.txLink(hh.txFull,{color:'#8A887E'}),
-            hh.txFull ? h('a',{href:this.explorerBase()+'/tx/'+hh.txFull,target:'_blank',rel:'noreferrer',style:S("font-family:'IBM Plex Mono',monospace;font-size:10px;color:#2F7A4E;text-decoration:none;border-bottom:1px dotted #2F7A4E;")},'view on Basescan ↗') : null),
+            (hh.txFull && this.state.walletLive) ? h('a',{href:this.explorerBase()+'/tx/'+hh.txFull,target:'_blank',rel:'noreferrer',style:S("font-family:'IBM Plex Mono',monospace;font-size:10px;color:#2F7A4E;text-decoration:none;border-bottom:1px dotted #2F7A4E;")},'view on Basescan ↗') : null),
           h('div',{style:S("display:flex;align-items:center;gap:14px;")},
             h('span',{style:S("font-family:'IBM Plex Mono',monospace;font-size:13px;color:#2F7A4E;font-variant-numeric:tabular-nums;")},hh.amount),
             h('span',{style:S("font-family:'IBM Plex Mono',monospace;font-size:10px;color:#9C9A90;")},hh.time)))),
@@ -712,8 +712,10 @@ class App extends React.Component {
         d.risk.signals.length ? h('div',{style:S("background:#FAF9F5;border:1px solid #E3E1D8;")}, d.risk.signals.map((s,i)=> h('div',{key:i,style:S("display:flex;align-items:center;justify-content:space-between;gap:12px;padding:10px 14px;border-bottom:1px solid #F0EEE7;")}, h('span',{style:S("font-family:'IBM Plex Mono',monospace;font-size:11.5px;color:#3A382F;")},s.signal), h('span',{style:S("font-size:11.5px;color:#6E6D64;text-align:right;")},s.detail)))) : h('div',{style:S("font-family:'IBM Plex Mono',monospace;font-size:11px;color:#9C9A90;")},'no adverse signals'),
         (kind!=='REJECT') ? h('div',{style:S("margin-top:18px;border-top:1px dashed #E3E1D8;padding-top:14px;font-family:'IBM Plex Mono',monospace;font-size:10.5px;color:#8A887E;line-height:1.7;")},
           h('div',null,'↳ Now in the Funder dashboard'+(kind==='QUEUE_HUMAN'?' co-signature queue':'')+' and the Public ledger.'),
-          rel ? h('div',{style:S("margin-top:7px;color:#2F7A4E;font-size:11px;")}, '✓ First tranche '+this.money(rel.amount)+' sent on-chain — tx ', this.txLink(rel.tx,{text:this.shortTx(rel.tx)}), ' ↗')
-              : (kind==='QUEUE_HUMAN' ? h('div',{style:S("margin-top:7px;")},'Co-sign it in the Funder tab to release the first tranche on-chain.') : null)) : null));
+          rel ? (this.state.walletLive
+                  ? h('div',{style:S("margin-top:7px;color:#2F7A4E;font-size:11px;")}, '✓ First tranche '+this.money(rel.amount)+' sent on-chain — tx ', this.txLink(rel.tx,{text:this.shortTx(rel.tx)}), ' ↗')
+                  : h('div',{style:S("margin-top:7px;color:#2F7A4E;font-size:11px;")}, '✓ First tranche '+this.money(rel.amount)+' released — simulated (demo mock wallet; no real on-chain transaction)'))
+              : (kind==='QUEUE_HUMAN' ? h('div',{style:S("margin-top:7px;")},'Co-sign it in the Funder tab to release the first tranche.') : null)) : null));
   }
 
   renderDrawer(d){
