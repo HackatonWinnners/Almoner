@@ -11,6 +11,8 @@
     "demo": "tsx src/index.ts",
     "demo:disaster": "tsx src/index.ts post-disaster-ph-2026",
     "circle:plan": "tsx src/tools/circlePolicy.ts",
+    "brain": "tsx src/brain-demo.ts",
+    "brain:disaster": "tsx src/brain-demo.ts post-disaster-ph-2026",
     "typecheck": "tsc --noEmit",
     "build": "tsc"
   },
@@ -18,5 +20,9 @@
     "@types/node": "^22.0.0",
     "tsx": "^4.19.0",
     "typescript": "^5.6.0"
+  },
+  "dependencies": {
+    "@anthropic-ai/claude-agent-sdk": "^0.3.183",
+    "zod": "^4.4.3"
   }
 }

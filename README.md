@@ -20,12 +20,39 @@ women's co-ops, or data bounties by swapping a config file.
 npm install
 npm run demo            # climate-adaptation preset (Bangladesh coastal)
 npm run demo:disaster   # post-typhoon preset (Philippines) — proves config-swap
+npm run circle:plan     # show how each program maps to Circle's native caps
 npm run typecheck
+
+# Claude Agent SDK brain (Claude operates the wallet). Needs an API key:
+ANTHROPIC_API_KEY=sk-ant-... npm run brain
 ```
 
-The demo is **fully offline and deterministic** — no API keys, no network. All
-external services (Circle wallet, x402 screening/image-check, the scoring LLM)
-run as mocks behind interfaces so the whole lifecycle plays the same every run.
+The default demo is **fully offline and deterministic** — no API keys, no
+network. All external services (Circle wallet, x402 screening/image-check, the
+scoring LLM) run as mocks behind interfaces so the whole lifecycle plays the
+same every run.
+
+### Two ways to drive the same engine
+
+| | `npm run demo` | `npm run brain` |
+|---|---|---|
+| Driver | deterministic script | **Claude Agent SDK** — Claude decides + calls tools |
+| Needs | nothing | `ANTHROPIC_API_KEY` (Pro/Max OAuth is **not** accepted by the SDK) |
+| Money path | guarded `AgentCore` | **same** guarded `AgentCore`, called via MCP tools |
+
+The brain (`src/agent/brain.ts`) runs Claude as the grant officer through an
+**in-process MCP server** (`src/agent/tools/circleWalletMcp.ts`) built with the
+SDK's `createSdkMcpServer`/`tool`. Claude calls `evaluate_application`,
+`release_next_tranche`, `verify_milestone_evidence`, etc. — but every one routes
+through `AgentCore` → `PolicyEngine` + `SpendingPolicyGuard`, so **the LLM cannot
+move funds outside the caps**, and a `canUseTool` callback enforces operator
+co-signature on human-band grants. The LLM reasons; the deterministic core
+enforces.
+
+> **Note on "Circle Skills (MCP)":** Circle ships *no* MCP server — its "Skills"
+> are markdown docs that teach an agent to drive the `circle` CLI. So we expose
+> the wallet ops as in-process MCP tools ourselves (cleaner, no extra process);
+> Circle Skills are the knowledge layer behind the CLI-backed `live` impl.
 
 It walks the §11 scenario end-to-end: 4 applications → score + risk-screen →
 auto-approve / human-queue / reject / **block** → tranche disbursement with tx
@@ -114,10 +141,15 @@ src/
   config/loader.ts       JSONC loader + invariant validation
   agent/
     core.ts              orchestrator + buildDecision() (the lifecycle)
+    brain.ts             Claude Agent SDK grant-officer loop (needs API key)
+    tools/
+      circleWalletMcp.ts in-process MCP tools (guarded wallet ops for the LLM)
     scoring.ts           merit / impact rubric (§6.1)
     risk.ts              risk / fraud scoring + tiers (§6.2)
     verify.ts            milestone evidence pipeline (§7)
     clock.ts             injectable clock (deterministic demo)
+  runtime.ts             shared wiring + demo fixtures (used by demo & brain)
+  brain-demo.ts          entrypoint for `npm run brain`
   policy/engine.ts       app-level guardrails (§5.2)
   tools/
     spendingGuard.ts     the hard backstop — full cap set, any chain (§5.1)
