@@ -40,12 +40,21 @@ reclaim → public ledger + budget burndown.
 |---|---|---|
 | Grant lifecycle / state machine | ✅ real | — |
 | Merit + risk scoring logic | ✅ real (anchored rubric, weighted) | LLM returns the anchors |
-| Two-layer policy enforcement | ✅ real (caps actually block transfers) | mirrors on-chain wallet policy |
+| Two-layer policy enforcement | ✅ real (`SpendingPolicyGuard` actually blocks transfers) | + native subset on mainnet |
 | Milestone verification pipeline | ✅ real (completeness/authenticity/reuse) | vision-LLM + x402 image API |
-| USDC transfers | mock wallet enforcing the spending policy | Circle Agent Wallet, Arc testnet |
+| USDC transfers | mock wallet running the real guard | `LiveCircleWallet` over Circle CLI, Arc testnet |
+| Circle CLI adapter | ✅ pure argv builders + policy mapping (unit-testable) | inject `CircleCliRunner` (spawns `circle`) |
 | Wallet screening / image check | mock x402 client | x402 marketplace (paid nanopayments) |
 | Scoring "LLM" | deterministic fixtures | Claude Agent SDK |
 | On-chain ledger | in-memory append-only mirror | Arc testnet events |
+
+> **Circle policy reality (researched, see [`docs/circle-integration.md`](docs/circle-integration.md)):**
+> Circle's native spending policy is **mainnet-only** and expresses only monotonic
+> amount caps (`per-tx ≤ daily ≤ weekly ≤ monthly`). **Arc is testnet-only**, so on
+> the disbursement chain there is *no* Circle-enforced policy. Almoner's
+> `SpendingPolicyGuard` is therefore the always-on backstop (full cap set, any
+> chain); on mainnet the live adapter additionally pushes the native subset to
+> Circle. Run `npm run circle:plan` to see the mapping per program.
 
 Switch via `ALMONER_MODE` in `.env` (see `.env.example`). The `mock`
 implementations live next to their interfaces, so wiring `live` is a matter of
@@ -111,7 +120,10 @@ src/
     clock.ts             injectable clock (deterministic demo)
   policy/engine.ts       app-level guardrails (§5.2)
   tools/
-    circleWallet.ts      Circle wallet adapter + hard spending policy (§5.1)
+    spendingGuard.ts     the hard backstop — full cap set, any chain (§5.1)
+    circleWallet.ts      wallet interface + offline mock (runs the guard)
+    circleWalletLive.ts  live adapter over the Circle CLI (Arc testnet)
+    circlePolicy.ts      ProgramConfig → Circle native limits + monotonic check
     x402.ts              paid screening / image-check adapter
   store/
     db.ts                off-chain store (PII, applications, evidence)
