@@ -9,6 +9,7 @@ import { Ledger } from "./store/ledger.js";
 import { PolicyEngine } from "./policy/engine.js";
 import { MockCircleWallet, policyFromConfig } from "./tools/circleWallet.js";
 import { LiveCircleWallet } from "./tools/circleWalletLive.js";
+import { CircleApiWallet } from "./tools/circleApiWallet.js";
 import { MockX402Client } from "./tools/x402.js";
 import { MockMeritAssessor, type MeritFixture, type MeritAssessor } from "./agent/scoring.js";
 import { GeminiMeritAssessor } from "./agent/assessors/geminiMerit.js";
@@ -51,14 +52,19 @@ const LIVE_CHAIN = process.env.ALMONER_CHAIN ?? "BASE-SEPOLIA";
 // synthetic, so on-chain disbursements route to this controlled testnet address.
 const RECIPIENT = process.env.ALMONER_RECIPIENT ?? "0x79fde131eec4fdea04316d75ce1b79040bffb9c5";
 const FIRST_TRANCHE_USDC = 0.1;
-// Wallet mode: "live" does real Circle transfers (needs the `circle` CLI + a
-// logged-in testnet session — local only). "mock" simulates disbursement and is
-// the default for containerized / VPS deploys where the CLI session is absent.
+// Wallet mode:
+//   mock       – simulated disbursement (default; safe for any deploy)
+//   live       – real Circle transfers via the `circle` CLI session (local only)
+//   circle-api – real Circle transfers via the Developer-Controlled-Wallets REST
+//                API (api key + entity secret) — works in a container / on a VPS
 const WALLET_MODE = (process.env.ALMONER_WALLET ?? "mock").toLowerCase();
-const LIVE = WALLET_MODE === "live";
-const wallet = LIVE
-  ? new LiveCircleWallet({ cfg: { ...cfg, chain: LIVE_CHAIN }, address: TREASURY, usdcTokenAddress: USDC, policy: policyFromConfig(cfg), clock: () => clock.now() })
-  : new MockCircleWallet(policyFromConfig(cfg), () => clock.now());
+const LIVE = WALLET_MODE !== "mock"; // both live + circle-api move real USDC
+const wallet =
+  WALLET_MODE === "live"
+    ? new LiveCircleWallet({ cfg: { ...cfg, chain: LIVE_CHAIN }, address: TREASURY, usdcTokenAddress: USDC, policy: policyFromConfig(cfg), clock: () => clock.now() })
+    : WALLET_MODE === "circle-api"
+      ? new CircleApiWallet({ apiKey: process.env.CIRCLE_API_KEY ?? "", entitySecret: process.env.CIRCLE_ENTITY_SECRET ?? "", walletId: process.env.CIRCLE_WALLET_ID ?? "", policy: policyFromConfig(cfg), clock: () => clock.now() })
+      : new MockCircleWallet(policyFromConfig(cfg), () => clock.now());
 const x402 = new MockX402Client();
 
 // ---- portfolio: each runs through the real engine to a target state ----
@@ -288,8 +294,9 @@ createServer(async (req, res) => {
   console.log(`\n  Almoner dashboard → http://localhost:${port}  ·  Gemini scoring: ${snap.meta.gemini ? "on" : "off (heuristic)"}`);
   if (LIVE) {
     let bal = "?";
-    try { bal = String(await wallet.balance()); } catch { /* CLI session may be inactive */ }
-    console.log(`  LIVE wallet · ${LIVE_CHAIN} · treasury ${TREASURY} · balance ${bal} USDC · each disbursement = ${FIRST_TRANCHE_USDC} USDC real on-chain`);
+    try { bal = String(await wallet.balance()); } catch { /* session/credentials may be inactive */ }
+    const label = WALLET_MODE === "circle-api" ? `circle-api wallet (DCW) · ${LIVE_CHAIN} · ${process.env.CIRCLE_WALLET_ID ?? "?"}` : `LIVE wallet (CLI) · ${LIVE_CHAIN} · ${TREASURY}`;
+    console.log(`  ${label} · balance ${bal} USDC · each disbursement = ${FIRST_TRANCHE_USDC} USDC real on-chain`);
   } else {
     console.log(`  mock wallet (simulated disbursements) — set ALMONER_WALLET=live with a Circle CLI session for real transfers`);
   }
