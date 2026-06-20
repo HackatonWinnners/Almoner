@@ -1,3 +1,4 @@
+import "./loadEnv.js";
 import { loadConfig } from "./config/loader.js";
 import { Store } from "./store/db.js";
 import { Ledger } from "./store/ledger.js";

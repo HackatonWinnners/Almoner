@@ -1,4 +1,4 @@
-import { GoogleGenAI, type FunctionCall, type Part } from "@google/genai";
+import { GoogleGenAI, type FunctionCall, type GenerateContentResponse, type Part } from "@google/genai";
 import type { ProgramConfig } from "../types/program.js";
 import type { Store } from "../store/db.js";
 import { GrantOfficerToolkit, GRANT_FUNCTION_DECLARATIONS, type GrantToolkitDeps } from "./tools/grantToolkit.js";
@@ -36,6 +36,7 @@ function systemPrompt(cfg: ProgramConfig): string {
     "4. If REJECT: explain the reason in one or two sentences (for low merit, what the applicant could improve).",
     "",
     "Never try to bypass a blocked tool. If a tool returns an ERROR or DENIED, report it plainly — that is the system working as intended.",
+    "To stay efficient, evaluate ALL the applications in your FIRST turn by issuing one evaluate_application call per application together, then act on the results.",
     "When you have handled every application, reply with a one-paragraph summary and no further function calls.",
   ].join("\n");
 }
@@ -57,7 +58,7 @@ export async function runGrantOfficer(
   const toolkit = new GrantOfficerToolkit(deps);
 
   const chat = ai.chats.create({
-    model: opts.model ?? "gemini-2.5-flash",
+    model: opts.model ?? process.env.GEMINI_MODEL ?? "gemini-2.5-flash",
     config: {
       systemInstruction: systemPrompt(deps.cfg),
       tools: [{ functionDeclarations: GRANT_FUNCTION_DECLARATIONS as unknown as object[] }],
@@ -80,6 +81,31 @@ export async function runGrantOfficer(
     return null;
   };
 
+  // Read text from parts directly — the `.text` getter warns when function-call
+  // parts are also present (which is exactly our multi-tool turns).
+  const textOf = (resp: GenerateContentResponse): string =>
+    (resp.candidates?.[0]?.content?.parts ?? [])
+      .map((p) => (typeof p.text === "string" ? p.text : ""))
+      .join("")
+      .trim();
+
+  // Free-tier quotas are tight (a few requests/minute). Respect the API's
+  // retryDelay on 429 and back off rather than crashing mid-run.
+  const send = async (msg: Parameters<typeof chat.sendMessage>[0]["message"]): Promise<GenerateContentResponse> => {
+    for (let attempt = 0; ; attempt++) {
+      try {
+        return await chat.sendMessage({ message: msg });
+      } catch (e) {
+        const status = (e as { status?: number }).status;
+        if (status !== 429 || attempt >= 4) throw e;
+        const m = String((e as Error).message ?? e).match(/"retryDelay":"(\d+)s"/);
+        const waitS = Math.min((m ? Number(m[1]) : 30) + 1, 65);
+        opts.onEvent?.({ kind: "text", detail: `(rate-limited — waiting ${waitS}s)` });
+        await new Promise((r) => setTimeout(r, waitS * 1000));
+      }
+    }
+  };
+
   const maxTurns = opts.maxTurns ?? 24;
   let message: Parameters<typeof chat.sendMessage>[0]["message"] =
     `Process these grant applications now: ${applicationIds.join(", ")}. ` +
@@ -89,10 +115,11 @@ export async function runGrantOfficer(
   let turns = 0;
 
   for (; turns < maxTurns; turns++) {
-    const resp = await chat.sendMessage({ message });
-    if (resp.text) {
-      result = resp.text;
-      opts.onEvent?.({ kind: "text", detail: resp.text });
+    const resp = await send(message);
+    const text = textOf(resp);
+    if (text) {
+      result = text;
+      opts.onEvent?.({ kind: "text", detail: text });
     }
     const calls = resp.functionCalls;
     if (!calls || calls.length === 0) break;

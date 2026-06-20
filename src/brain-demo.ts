@@ -1,3 +1,4 @@
+import "./loadEnv.js";
 import { buildRuntime, DEMO_APP_ORDER } from "./runtime.js";
 import { runGrantOfficer } from "./agent/geminiBrain.js";
 
