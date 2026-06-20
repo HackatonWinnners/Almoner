@@ -26,10 +26,12 @@ export class PolicyEngine {
     if (app.requestedAmount > this.cfg.budget.per_grant_cap) {
       return { allowed: false, rule: "per_grant_cap", detail: `requested ${app.requestedAmount} > cap ${this.cfg.budget.per_grant_cap}` };
     }
-    if (!this.cfg.eligibility.categories.includes(app.category)) {
+    const cats = this.cfg.eligibility.categories;
+    if (!cats.includes("*") && !cats.includes(app.category)) {
       return { allowed: false, rule: "eligibility.category", detail: `category ${app.category} not allowed` };
     }
-    if (!this.cfg.eligibility.geo_allow.includes(app.geo)) {
+    const geos = this.cfg.eligibility.geo_allow;
+    if (!geos.includes("*") && !geos.includes(app.geo)) {
       return { allowed: false, rule: "eligibility.geo", detail: `geo ${app.geo} not in allow-list` };
     }
     if (decision.risk.sanctioned) {

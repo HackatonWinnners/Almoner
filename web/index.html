@@ -51,7 +51,7 @@ class App extends React.Component {
     filters: { program: 'ALL', type: 'ALL', tier: 'ALL' },
     grants: this.seedGrants(),
     live: false, pool: 2000, reclaimed: 210,
-    applyForm: { amount: 150, category: 'tree_nursery', program: 'WATER', narrative: '', walletAge: 120, priorGrants: 0, endorser: false },
+    applyForm: { amount: 150, category: 'water', title: '', location: '', beneficiaries: '', recipientWallet: '', narrative: '', walletAge: 120, endorser: false, attachments: [] },
     applyBusy: false, applyResult: null,
   };
 
@@ -261,6 +261,14 @@ class App extends React.Component {
   submitEvidence(){ this.setState({ appPhase:'verifying' }); setTimeout(()=>{ this.setState({ appPhase:'verified' }); }, 1700); }
   setFilter(k,v){ this.setState(s=>({ filters:{...s.filters,[k]:v} })); }
   setForm(k,val){ this.setState(s=>({ applyForm:{...s.applyForm,[k]:val} })); }
+  onFiles(e){ const files=[...(e.target.files||[])].slice(0,4);
+    Promise.all(files.map(f=>new Promise(res=>{
+      if(f.size>2*1024*1024){ res({name:f.name,type:f.type,size:f.size,data:null,tooBig:true}); return; }
+      const r=new FileReader(); r.onerror=()=>res({name:f.name,type:f.type,size:f.size,data:null});
+      r.onload=()=>res({name:f.name,type:f.type,size:f.size,data:String(r.result||'').split(',')[1]||null});
+      r.readAsDataURL(f);
+    }))).then(atts=>this.setState(s=>({ applyForm:{...s.applyForm,attachments:atts} }))); }
+  removeAtt(i){ this.setState(s=>({ applyForm:{...s.applyForm,attachments:s.applyForm.attachments.filter((_,j)=>j!==i)} })); }
   refreshState(){ fetch('/api/state').then(r=>r.json()).then(d=>{ if(d&&d.grants) this.setState(s=>({ grants:d.grants, live:true, reclaimed:(d.meta&&d.meta.reclaimed!=null)?d.meta.reclaimed:s.reclaimed, chain:(d.meta&&d.meta.chain)||s.chain })); }).catch(()=>{}); }
   submitApply(){ const f=this.state.applyForm; if(this.state.applyBusy || !String(f.narrative).trim()) return;
     this.setState({ applyBusy:true, applyResult:null });
@@ -646,21 +654,30 @@ class App extends React.Component {
 
   renderApply(v){
     const f=this.state.applyForm, busy=this.state.applyBusy, res=this.state.applyResult;
-    const cats=[['tree_nursery','Tree nursery'],['rainwater_harvesting','Rainwater harvesting'],['raised_seedbeds','Raised seedbeds']];
+    const cats=[['water','Water & sanitation'],['education','Education'],['health','Health'],['food','Food security'],['energy','Energy access'],['shelter','Shelter / housing'],['livelihood','Livelihood / income'],['agriculture','Agriculture'],['disaster','Disaster relief'],['environment','Environment / climate'],['other','Other']];
     const istyle=S("font-family:'IBM Plex Mono',monospace;font-size:13px;padding:9px 11px;border:1px solid #D9D7CE;background:#fff;color:#1A1A17;border-radius:0;width:100%;");
     const field=(t,el)=>h('div',{style:S("display:flex;flex-direction:column;gap:6px;")}, h('label',{style:S("font-size:10px;letter-spacing:0.08em;text-transform:uppercase;color:#6E6D64;")},t), el);
-    const canSubmit = !busy && String(f.narrative).trim().length>0;
-    return h('div',{key:'apply',style:S("max-width:760px;")},
+    const atts=f.attachments||[];
+    const canSubmit = !busy && String(f.narrative).trim().length>0 && String(f.title).trim().length>0;
+    return h('div',{key:'apply',style:S("max-width:780px;")},
       h('div',{style:S("margin-bottom:18px;")},
         h('div',{style:S("font-size:13px;font-weight:700;letter-spacing:0.02em;text-transform:uppercase;")},'Apply for a microgrant'),
-        h('div',{style:S("font-family:'IBM Plex Mono',monospace;font-size:11px;color:#8A887E;margin-top:5px;")}, v.live?'the agent reads your narrative, scores six criteria, risk-screens and decides — live':'start the server (npm run dashboard) for live agent scoring')),
+        h('div',{style:S("font-family:'IBM Plex Mono',monospace;font-size:11px;color:#8A887E;margin-top:5px;")}, v.live?'the agent reads your application — text and any photos — scores six criteria, risk-screens and decides':'start the server (npm run dashboard) for live agent scoring')),
       h('div',{style:S("background:#F4F3EE;border:1px solid #D9D7CE;padding:20px;display:flex;flex-direction:column;gap:14px;")},
+        field('Project title', h('input',{value:f.title,onChange:e=>this.setForm('title',e.target.value),placeholder:'e.g. Handpump repair for Ward 3',style:istyle})),
         h('div',{style:S("display:grid;grid-template-columns:1fr 1fr;gap:14px;")},
           field('Amount (USDC)', h('input',{type:'number',min:1,value:f.amount,onChange:e=>this.setForm('amount',e.target.value),style:istyle})),
-          field('Category', h('select',{value:f.category,onChange:e=>this.setForm('category',e.target.value),style:istyle}, cats.map(c=>h('option',{key:c[0],value:c[0]},c[1])))),
-          field('Program label', h('input',{value:f.program,onChange:e=>this.setForm('program',e.target.value),style:istyle})),
-          field('Wallet age (days)', h('input',{type:'number',min:0,value:f.walletAge,onChange:e=>this.setForm('walletAge',e.target.value),style:istyle}))),
-        field('Plan / narrative — the need, your plan, itemized costs, milestones', h('textarea',{value:f.narrative,onChange:e=>this.setForm('narrative',e.target.value),rows:5,placeholder:'e.g. Repair the village handpump serving 40 households. $90 parts + $60 two-day certified technician. m1 buy parts, m2 install, m3 30-day flow test…',style:S("font-family:'IBM Plex Mono',monospace;font-size:12.5px;line-height:1.5;padding:11px;border:1px solid #D9D7CE;background:#fff;color:#1A1A17;border-radius:0;width:100%;resize:vertical;")})),
+          field('Category / sector', h('select',{value:f.category,onChange:e=>this.setForm('category',e.target.value),style:istyle}, cats.map(c=>h('option',{key:c[0],value:c[0]},c[1]))))),
+        h('div',{style:S("display:grid;grid-template-columns:1fr 1fr;gap:14px;")},
+          field('Location / region', h('input',{value:f.location,onChange:e=>this.setForm('location',e.target.value),placeholder:'e.g. Satkhira, Bangladesh',style:istyle})),
+          field('Beneficiaries', h('input',{value:f.beneficiaries,onChange:e=>this.setForm('beneficiaries',e.target.value),placeholder:'e.g. 40 households',style:istyle}))),
+        h('div',{style:S("display:grid;grid-template-columns:1fr 1fr;gap:14px;")},
+          field('Wallet age (days)', h('input',{type:'number',min:0,value:f.walletAge,onChange:e=>this.setForm('walletAge',e.target.value),style:istyle})),
+          field('Recipient wallet (optional)', h('input',{value:f.recipientWallet,onChange:e=>this.setForm('recipientWallet',e.target.value),placeholder:'0x… (defaults to demo address)',style:istyle}))),
+        field('Plan / narrative — the need, your plan, itemized costs, milestones', h('textarea',{value:f.narrative,onChange:e=>this.setForm('narrative',e.target.value),rows:5,placeholder:'Describe the need, who it helps, itemized costs, and checkable milestones…',style:S("font-family:'IBM Plex Mono',monospace;font-size:12.5px;line-height:1.5;padding:11px;border:1px solid #D9D7CE;background:#fff;color:#1A1A17;border-radius:0;width:100%;resize:vertical;")})),
+        field('Supporting media — images the agent will examine (PDFs noted)', h('div',null,
+          h('input',{type:'file',multiple:true,accept:'image/*,.pdf',onChange:e=>this.onFiles(e),style:S("font-family:'IBM Plex Mono',monospace;font-size:11px;color:#3A382F;")}),
+          atts.length? h('div',{style:S("display:flex;flex-wrap:wrap;gap:7px;margin-top:10px;")}, atts.map((a,i)=> h('span',{key:i,style:S("display:inline-flex;align-items:center;gap:8px;border:1px solid #D9D7CE;background:#fff;padding:5px 9px;font-family:'IBM Plex Mono',monospace;font-size:10.5px;color:"+(a.tooBig?'#B23A30':'#3A382F')+";")}, (/^image\//.test(a.type||'')?'🖼 ':'📄 ')+a.name+(a.tooBig?' (>2MB, skipped)':''), h('button',{onClick:()=>this.removeAtt(i),style:S("background:none;border:none;color:#B23A30;cursor:pointer;font-size:12px;padding:0;line-height:1;")},'✕')))) : null)),
         h('label',{style:S("display:flex;align-items:center;gap:9px;font-size:12.5px;color:#3A382F;cursor:pointer;")}, h('input',{type:'checkbox',checked:f.endorser,onChange:e=>this.setForm('endorser',e.target.checked)}), 'Staked local endorser vouches for this application'),
         h('button',{onClick:()=>this.submitApply(),disabled:!canSubmit,style:S("background:"+(canSubmit?'#1A1A17':'#E6E4DC')+";color:"+(canSubmit?'#fff':'#A8A69C')+";border:none;font-family:'IBM Plex Mono',monospace;font-size:12px;font-weight:600;letter-spacing:0.05em;text-transform:uppercase;padding:13px;cursor:"+(canSubmit?'pointer':'not-allowed')+";")}, busy?'Agent scoring your application…':'Submit to the agent')),
       busy ? h('div',{style:S("margin-top:16px;display:flex;align-items:center;gap:9px;font-family:'IBM Plex Mono',monospace;font-size:11.5px;color:#A9781B;")}, h('span',{style:S("width:8px;height:8px;background:#A9781B;display:inline-block;animation:alm-pulse 1s infinite;")}),'Reading the narrative · scoring six criteria · risk screening…') : null,
@@ -678,7 +695,8 @@ class App extends React.Component {
         h('div',{style:S("display:flex;align-items:center;gap:11px;")}, this.dot(k,10), h('div',{style:S("font-family:'IBM Plex Mono',monospace;font-size:13px;font-weight:600;letter-spacing:0.03em;text-transform:uppercase;color:"+c.fg+";")},title)),
         h('div',{style:S("display:flex;align-items:center;gap:10px;")}, this.meritChip(d.merit.score), this.chip(d.risk.tier+' risk',this.tierKind(d.risk.tier),{dot:true}))),
       h('div',{style:S("padding:18px;")},
-        h('div',{style:S("font-size:13px;line-height:1.5;color:#3A382F;margin-bottom:18px;")}, d.rationale),
+        h('div',{style:S("font-size:13px;line-height:1.5;color:#3A382F;margin-bottom:"+(res.mediaUsed?'10px':'18px')+";")}, d.rationale),
+        (res.mediaUsed>0) ? h('div',{style:S("font-family:'IBM Plex Mono',monospace;font-size:10.5px;color:#2F7A4E;margin-bottom:18px;")},'🖼 Agent examined '+res.mediaUsed+' attached image'+(res.mediaUsed>1?'s':'')+' while scoring.') : null,
         h('div',{style:S("font-size:11px;font-weight:700;letter-spacing:0.06em;text-transform:uppercase;color:#6E6D64;margin-bottom:12px;")},'Merit breakdown · '+d.merit.score+'/100 (fund line '+d.merit.threshold+')'),
         h('div',{style:S("display:flex;flex-direction:column;gap:12px;")}, d.merit.rows.map((r,i)=>{ const rk=r.pct>=78?'green':r.pct>=55?'amber':'red';
           return h('div',{key:i},

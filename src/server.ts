@@ -28,6 +28,11 @@ import type { Application, EvidenceItem } from "./types/grant.js";
 // all genuine AgentCore output — only presentation labels are cosmetic.
 
 const cfg = loadConfig("climate-adapt-bd-2026");
+// Generic intake: the apply form is sector-agnostic, so accept any category /
+// region and let the agent decide on merit + risk (the program is the policy,
+// not a fixed taxonomy). Seeded fixtures still drive their own categories.
+cfg.eligibility.categories = ["*"];
+cfg.eligibility.geo_allow = ["*"];
 const clock = new FixedClock();
 const store = new Store();
 const ledger = new Ledger();
@@ -79,11 +84,12 @@ for (const d of PORTFOLIO) {
 const GEMINI_KEY = process.env.GEMINI_API_KEY ?? process.env.GOOGLE_API_KEY;
 const mockMerit = new MockMeritAssessor(meritFixtures);
 const geminiMerit = GEMINI_KEY ? new GeminiMeritAssessor(GEMINI_KEY) : null;
+const mediaByApp = new Map<string, { mimeType: string; data: string }[]>(); // attachments for the in-flight application
 const merit: MeritAssessor = {
   async assess(app, c) {
     if (meritFixtures[app.id] || !geminiMerit) return mockMerit.assess(app, c);
     try {
-      return await geminiMerit.assess(app, c);
+      return await geminiMerit.assess(app, c, mediaByApp.get(app.id));
     } catch (e) {
       console.warn("[apply] Gemini merit failed, using heuristic:", (e as Error).message);
       return mockMerit.assess(app, c);
@@ -210,21 +216,42 @@ createServer(async (req, res) => {
         const body = JSON.parse((await readBody(req)) || "{}") as Record<string, unknown>;
         const n = ++applyCounter;
         const id = "apply-" + n;
-        const allowed = cfg.eligibility.categories;
-        const category = typeof body.category === "string" && allowed.includes(body.category) ? body.category : allowed[0]!;
+        const category = String(body.category || "other").slice(0, 40) || "other";
+        const title = String(body.title ?? "").slice(0, 160).trim();
+        const location = (String(body.location ?? "").slice(0, 120).trim()) || "unspecified";
+        const beneficiaries = String(body.beneficiaries ?? "").slice(0, 80).trim();
+        const userNarrative = String(body.narrative ?? "").slice(0, 4000);
+        const header = [title && `Project: ${title}`, `Location: ${location}`, beneficiaries && `Beneficiaries: ${beneficiaries}`].filter(Boolean).join("\n");
+        const narrative = header ? `${header}\n\n${userNarrative}` : userNarrative;
+        // recipient: a valid EVM address from the form, else the controlled demo address
+        const recipRaw = String(body.recipientWallet ?? "").trim();
+        const toAddress = /^0x[0-9a-fA-F]{40}$/.test(recipRaw) ? recipRaw : RECIPIENT;
+        // image attachments → multimodal merit scoring (cap count + size)
+        const atts = Array.isArray(body.attachments) ? (body.attachments as Record<string, unknown>[]).slice(0, 4) : [];
+        const media = atts
+          .filter((a) => typeof a?.data === "string" && /^image\//.test(String(a?.type)) && String(a.data).length < 3_000_000)
+          .map((a) => ({ mimeType: String(a.type), data: String(a.data) }))
+          .slice(0, 3);
+
         const app: Application = {
           id, programId: cfg.program_id,
-          applicant: { id: id + "-r", displayName: "New applicant", wallet: { address: RECIPIENT, ageDays: Math.max(0, Number(body.walletAge) || 90), priorGrants: Math.max(0, Number(body.priorGrants) || 0), priorFlags: 0 }, ...(body.endorser ? { endorser: { id: id + "-e", bondUsdc: 50 } } : {}) },
-          category, geo: "BD-coastal", requestedAmount: Math.max(1, Number(body.amount) || 100),
-          narrative: String(body.narrative ?? "").slice(0, 2000),
+          applicant: { id: id + "-r", displayName: title || "New applicant", wallet: { address: toAddress, ageDays: Math.max(0, Number(body.walletAge) || 90), priorGrants: Math.max(0, Number(body.priorGrants) || 0), priorFlags: 0 }, ...(body.endorser ? { endorser: { id: id + "-e", bondUsdc: 50 } } : {}) },
+          category, geo: location, requestedAmount: Math.max(1, Number(body.amount) || 100),
+          narrative,
           milestones: cfg.milestones.map((mm) => ({ id: mm.id, label: mm.label, tranchePct: mm.tranche_pct, evidenceRequired: mm.evidence })),
           submittedAt: clock.now(),
         };
-        PROGRAM_BY_ID[id] = String(body.program || category).toUpperCase().slice(0, 10);
-        const rec = await core.intake(app);
-        if (rec.decision) rec.decision.firstTrancheCap = FIRST_TRANCHE_USDC; // cap the real on-chain transfer
-        if (rec.decision?.kind === "AUTO_APPROVE" && store.get(id).state === "DISBURSE") await core.releaseTranche(id);
-        return json(res, { grant: serializeGrant(store.get(id), 1000 + n), decision: decisionPayload(store.get(id)) });
+        PROGRAM_BY_ID[id] = String(body.program || category).toUpperCase().slice(0, 12);
+        if (media.length) mediaByApp.set(id, media);
+        let rec;
+        try {
+          rec = await core.intake(app);
+          if (rec.decision) rec.decision.firstTrancheCap = FIRST_TRANCHE_USDC; // cap the real on-chain transfer
+          if (rec.decision?.kind === "AUTO_APPROVE" && store.get(id).state === "DISBURSE") await core.releaseTranche(id);
+        } finally {
+          mediaByApp.delete(id);
+        }
+        return json(res, { grant: serializeGrant(store.get(id), 1000 + n), decision: decisionPayload(store.get(id)), attachments: atts.map((a) => String(a?.name ?? "file")), mediaUsed: media.length });
       } catch (e) { return json(res, { error: (e as Error).message }, 400); }
     }
     const m = url.match(/^\/api\/grants\/([^/]+)\/(cosign|reject)$/);

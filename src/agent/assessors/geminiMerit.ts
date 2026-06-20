@@ -24,8 +24,9 @@ export class GeminiMeritAssessor implements MeritAssessor {
     this.ai = new GoogleGenAI({ apiKey });
   }
 
-  async assess(app: Application, cfg: ProgramConfig) {
+  async assess(app: Application, cfg: ProgramConfig, media?: { mimeType: string; data: string }[]) {
     const rubric = CRITERIA.map((c) => `- ${c}: ${ANCHOR_GUIDE[c]}`).join("\n");
+    const hasMedia = !!media && media.length > 0;
     const prompt = [
       `You are the merit officer for the microgrant program "${cfg.title}" (${cfg.country}).`,
       `Score this application on each criterion with an integer anchor 0–5 and a one-sentence rationale.`,
@@ -35,17 +36,22 @@ export class GeminiMeritAssessor implements MeritAssessor {
       "",
       "Application:",
       `- category: ${app.category}`,
+      `- location: ${app.geo}`,
       `- requested: ${app.requestedAmount} ${cfg.currency}`,
       `- has staked local endorser: ${app.applicant.endorser ? "yes" : "no"}`,
       `- wallet age (days): ${app.applicant.wallet.ageDays}, prior delivered grants: ${app.applicant.wallet.priorGrants}`,
       `- narrative: """${app.narrative}"""`,
+      hasMedia ? `\n${media!.length} supporting image(s) are attached below — examine them and let them inform feasibility, plan clarity, impact, and local legitimacy (e.g. does the photo evidence the stated need or capability?).` : "",
       "",
       `Return ONLY JSON of this exact shape: {${CRITERIA.map((c) => `"${c}":{"anchor":0-5,"rationale":"..."}`).join(",")}}`,
     ].join("\n");
 
+    const parts: unknown[] = [{ text: prompt }];
+    if (hasMedia) for (const m of media!) parts.push({ inlineData: { mimeType: m.mimeType, data: m.data } });
+
     const resp = await this.ai.models.generateContent({
       model: this.model,
-      contents: prompt,
+      contents: parts as never,
       config: { responseMimeType: "application/json", temperature: 0.2 },
     });
 
