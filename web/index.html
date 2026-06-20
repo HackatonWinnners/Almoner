@@ -60,7 +60,7 @@ class App extends React.Component {
   componentDidMount(){
     fetch('/api/state').then(r=> r.ok ? r.json() : Promise.reject()).then(d=>{
       if(d && Array.isArray(d.grants) && d.grants.length){
-        this.setState({ grants:d.grants, live:true, pool:(d.meta&&d.meta.pool)||2000, reclaimed:(d.meta&&d.meta.reclaimed)||0 });
+        this.setState({ grants:d.grants, live:true, pool:(d.meta&&d.meta.pool)||2000, reclaimed:(d.meta&&d.meta.reclaimed)||0, chain:(d.meta&&d.meta.chain)||'BASE-SEPOLIA' });
       }
     }).catch(()=>{});
   }
@@ -75,6 +75,10 @@ class App extends React.Component {
   hashFrom(seed,len){ const r=this.rng(seed); const hx='0123456789abcdef'; let s='0x'; for(let i=0;i<len;i++) s+=hx[Math.floor(r()*16)]; return s; }
   shortHash(f){ return f ? f.slice(0,6)+'…'+f.slice(-4) : '—'; }
   shortTx(f){ return f ? f.slice(0,10)+'…'+f.slice(-6) : '—'; }
+  explorerBase(){ const c=String(this.state.chain||'BASE-SEPOLIA').toUpperCase();
+    return ({'BASE-SEPOLIA':'https://sepolia.basescan.org','BASE':'https://basescan.org','ETH-SEPOLIA':'https://sepolia.etherscan.io','ARB-SEPOLIA':'https://sepolia.arbiscan.io','OP-SEPOLIA':'https://sepolia-optimism.etherscan.io'})[c] || 'https://sepolia.basescan.org'; }
+  txLink(full,o){ o=o||{}; if(!full) return '—';
+    return h('a',{href:this.explorerBase()+'/tx/'+full,target:'_blank',rel:'noreferrer',style:{fontFamily:this.MONO,color:o.color||'#2F7A4E',textDecoration:'none',borderBottom:'1px dotted '+(o.color||'#2F7A4E')}}, o.text||this.shortTx(full)); }
 
   M(kind){
     const g=this.props.green||'#2F7A4E', a=this.props.amber||'#A9781B', r=this.props.red||'#B23A30';
@@ -257,7 +261,7 @@ class App extends React.Component {
   submitEvidence(){ this.setState({ appPhase:'verifying' }); setTimeout(()=>{ this.setState({ appPhase:'verified' }); }, 1700); }
   setFilter(k,v){ this.setState(s=>({ filters:{...s.filters,[k]:v} })); }
   setForm(k,val){ this.setState(s=>({ applyForm:{...s.applyForm,[k]:val} })); }
-  refreshState(){ fetch('/api/state').then(r=>r.json()).then(d=>{ if(d&&d.grants) this.setState(s=>({ grants:d.grants, live:true, reclaimed:(d.meta&&d.meta.reclaimed!=null)?d.meta.reclaimed:s.reclaimed })); }).catch(()=>{}); }
+  refreshState(){ fetch('/api/state').then(r=>r.json()).then(d=>{ if(d&&d.grants) this.setState(s=>({ grants:d.grants, live:true, reclaimed:(d.meta&&d.meta.reclaimed!=null)?d.meta.reclaimed:s.reclaimed, chain:(d.meta&&d.meta.chain)||s.chain })); }).catch(()=>{}); }
   submitApply(){ const f=this.state.applyForm; if(this.state.applyBusy || !String(f.narrative).trim()) return;
     this.setState({ applyBusy:true, applyResult:null });
     fetch('/api/apply',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(f)})
@@ -270,7 +274,7 @@ class App extends React.Component {
     const signals=this.signalsFor(g).map(s=>({ ...s, dotEl:this.dot(s.kind,9) }));
     const stMap={released:['green','Released'],current:['amber','Awaiting evidence'],pending:['neutral','Locked'],flagged:['red','Flagged']};
     const milestones=g.milestones.map(m=>{ const sm=stMap[m.state]||stMap.pending;
-      return { tag:m.tag, pct:m.pct+'%', amount:this.money(m.amount), statusChip:this.chip(sm[1],sm[0],{dot:true}), pipelineEl:this.pipeline(m.ev), confEl:this.confMeter(m.conf), released:m.state==='released', txShort:m.tx?this.shortTx(m.tx):'' }; });
+      return { tag:m.tag, pct:m.pct+'%', amount:this.money(m.amount), statusChip:this.chip(sm[1],sm[0],{dot:true}), pipelineEl:this.pipeline(m.ev), confEl:this.confMeter(m.conf), released:m.state==='released', tx:m.tx, txShort:m.tx?this.shortTx(m.tx):'' }; });
     const log=this.logFor(g).map(e=>({ ...e, actorChip:this.chip(e.actor, e.actor==='OPERATOR'?'amber':'neutral'), dotEl:this.dot(e.dotKind,9) }));
     const used=g.milestones.filter(m=>m.state==='released').reduce((a,m)=>a+m.amount,0);
     return {
@@ -410,7 +414,7 @@ class App extends React.Component {
     const allEvents=this.buildEvents();
     const f=s.filters;
     const filtered=allEvents.filter(e=> (f.program==='ALL'||e.program===f.program) && (f.type==='ALL'||e.type===f.type) && (f.tier==='ALL'||e.tier===f.tier));
-    const ledgerEvents=filtered.map(e=>({ typeChip:this.chip(e.type,e.kind,{fs:9.5}), recip:e.recip, note:e.note, ratHash:this.shortHash(e.rat), amount:e.amount==null?'—':this.money(e.amount), txShort:this.shortTx(e.tx), time:this.relTime(e.min) }));
+    const ledgerEvents=filtered.map(e=>({ typeChip:this.chip(e.type,e.kind,{fs:9.5}), recip:e.recip, note:e.note, ratHash:this.shortHash(e.rat), amount:e.amount==null?'—':this.money(e.amount), tx:e.tx, real:e.type==='TrancheReleased', txShort:this.shortTx(e.tx), time:this.relTime(e.min) }));
     const programs=['ALL'].concat([...new Set(allEvents.map(e=>e.program))]);
     const types=['ALL','GrantCreated','RiskAssessed','TrancheReleased','MilestoneVerified','MilestoneFlagged','GrantCompleted','FundsReclaimed','ReputationUpdated'];
     const tiers=['ALL','LOW','MEDIUM','HIGH','BLOCK'];
@@ -635,7 +639,7 @@ class App extends React.Component {
           h('div',{style:S("font-family:'IBM Plex Mono',monospace;font-size:11px;")},ev.recip),
           h('div',{style:S("font-size:12px;color:#3A382F;padding-right:14px;")},ev.note,' ',h('span',{style:S("font-family:'IBM Plex Mono',monospace;font-size:9.5px;color:#B5B3A9;")},'· '+ev.ratHash)),
           h('div',{style:S("font-family:'IBM Plex Mono',monospace;font-size:12px;text-align:right;font-variant-numeric:tabular-nums;")},ev.amount),
-          h('div',{style:S("font-family:'IBM Plex Mono',monospace;font-size:10.5px;color:#6E6D64;")},ev.txShort),
+          h('div',{style:S("font-family:'IBM Plex Mono',monospace;font-size:10.5px;color:#6E6D64;")}, ev.real ? this.txLink(ev.tx,{color:'#2F7A4E'}) : ev.txShort),
           h('div',{style:S("font-family:'IBM Plex Mono',monospace;font-size:10px;color:#9C9A90;text-align:right;")},ev.time)))));
   }
 
@@ -665,6 +669,7 @@ class App extends React.Component {
 
   renderDecision(res){
     const d=res.decision; const kind=d.kind;
+    const rel=((res.grant&&res.grant.milestones)||[]).find(m=>m.tx);
     const k = kind==='AUTO_APPROVE'?'green':kind==='QUEUE_HUMAN'?'amber':'red'; const c=this.M(k);
     const title = kind==='AUTO_APPROVE'?'Approved — first tranche released':kind==='QUEUE_HUMAN'?'Provisionally approved — awaiting operator co-signature':'Not funded';
     return h('div',{style:S("margin-top:18px;background:#fff;border:1px solid #E3E1D8;")},
@@ -683,7 +688,10 @@ class App extends React.Component {
             h('div',{style:S("font-size:11.5px;line-height:1.4;color:#6E6D64;margin-top:5px;")}, r.rationale)); })),
         h('div',{style:S("font-size:11px;font-weight:700;letter-spacing:0.06em;text-transform:uppercase;color:#6E6D64;margin:22px 0 12px;")},'Risk signals · '+d.risk.score+'/100'),
         d.risk.signals.length ? h('div',{style:S("background:#FAF9F5;border:1px solid #E3E1D8;")}, d.risk.signals.map((s,i)=> h('div',{key:i,style:S("display:flex;align-items:center;justify-content:space-between;gap:12px;padding:10px 14px;border-bottom:1px solid #F0EEE7;")}, h('span',{style:S("font-family:'IBM Plex Mono',monospace;font-size:11.5px;color:#3A382F;")},s.signal), h('span',{style:S("font-size:11.5px;color:#6E6D64;text-align:right;")},s.detail)))) : h('div',{style:S("font-family:'IBM Plex Mono',monospace;font-size:11px;color:#9C9A90;")},'no adverse signals'),
-        (kind!=='REJECT') ? h('div',{style:S("margin-top:18px;border-top:1px dashed #E3E1D8;padding-top:14px;font-family:'IBM Plex Mono',monospace;font-size:10.5px;color:#8A887E;line-height:1.6;")}, '↳ Now in the Funder dashboard'+(kind==='QUEUE_HUMAN'?' co-signature queue':'')+' and the Public ledger.'+(d.disbursed>0?(' First tranche '+this.money(d.disbursed)+' released.'):'')) : null));
+        (kind!=='REJECT') ? h('div',{style:S("margin-top:18px;border-top:1px dashed #E3E1D8;padding-top:14px;font-family:'IBM Plex Mono',monospace;font-size:10.5px;color:#8A887E;line-height:1.7;")},
+          h('div',null,'↳ Now in the Funder dashboard'+(kind==='QUEUE_HUMAN'?' co-signature queue':'')+' and the Public ledger.'),
+          rel ? h('div',{style:S("margin-top:7px;color:#2F7A4E;font-size:11px;")}, '✓ First tranche '+this.money(rel.amount)+' sent on-chain — tx ', this.txLink(rel.tx,{text:this.shortTx(rel.tx)}), ' ↗')
+              : (kind==='QUEUE_HUMAN' ? h('div',{style:S("margin-top:7px;")},'Co-sign it in the Funder tab to release the first tranche on-chain.') : null)) : null));
   }
 
   renderDrawer(d){
@@ -728,7 +736,7 @@ class App extends React.Component {
                 ms.statusChip),
               ms.pipelineEl,
               h('div',{style:S("margin-top:11px;")},ms.confEl),
-              ms.released ? h('div',{style:S("font-family:'IBM Plex Mono',monospace;font-size:10px;color:#8A887E;margin-top:11px;border-top:1px dashed #E3E1D8;padding-top:9px;")},'tx '+ms.txShort) : null))),
+              ms.released ? h('div',{style:S("font-family:'IBM Plex Mono',monospace;font-size:10px;color:#8A887E;margin-top:11px;border-top:1px dashed #E3E1D8;padding-top:9px;")},'tx ', this.txLink(ms.tx,{color:'#8A887E'}),' ↗') : null))),
           h('div',{style:S("font-size:11px;font-weight:700;letter-spacing:0.06em;text-transform:uppercase;color:#6E6D64;margin:26px 0 12px;")},'Decision log'),
           h('div',{style:S("position:relative;padding-left:18px;")},
             h('div',{style:S("position:absolute;left:4px;top:4px;bottom:4px;width:1px;background:#D9D7CE;")}),
