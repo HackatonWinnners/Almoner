@@ -73,8 +73,8 @@ class App extends React.Component {
   money(n){ if(n==null) return '—'; return '$' + Number(n).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2}); }
   rng(seed){ let x = seed % 2147483647; if(x<=0) x+=2147483646; return ()=> (x = x*16807 % 2147483647) / 2147483647; }
   hashFrom(seed,len){ const r=this.rng(seed); const hx='0123456789abcdef'; let s='0x'; for(let i=0;i<len;i++) s+=hx[Math.floor(r()*16)]; return s; }
-  shortHash(f){ return f.slice(0,6)+'…'+f.slice(-4); }
-  shortTx(f){ return f.slice(0,10)+'…'+f.slice(-6); }
+  shortHash(f){ return f ? f.slice(0,6)+'…'+f.slice(-4) : '—'; }
+  shortTx(f){ return f ? f.slice(0,10)+'…'+f.slice(-6) : '—'; }
 
   M(kind){
     const g=this.props.green||'#2F7A4E', a=this.props.amber||'#A9781B', r=this.props.red||'#B23A30';
@@ -303,8 +303,12 @@ class App extends React.Component {
         flagSteps:[{n:'1',text:'Verify ownership by signing the challenge message sent to your wallet.'},{n:'2',text:'Add a staked local endorser who can vouch independently.'},{n:'3',text:'Once cleared, scoring resumes automatically — no need to reapply.'}],
         scenarioSwitch:this.appSwitch() };
     }
-    // active — drive off the live AWAIT_EVIDENCE grant (g4 / seed 41)
-    const g=this.state.grants.find(x=>x.seed===41) || this.state.grants[3];
+    // active — prefer a live grant that's awaiting evidence / has a released
+    // tranche; fall back to a seeded active grant so this view never depends on
+    // a particular index (live portfolios may have none disbursed yet).
+    const g=this.state.grants.find(x=>x.status==='AWAIT_EVIDENCE')
+      || this.state.grants.find(x=>x.milestones && x.milestones.some(m=>m.state==='released'))
+      || this.seedGrants().find(x=>x.seed===41);
     const provided=this.state.appProvided, phase=this.state.appPhase;
     const reqDefs=[['receipt','Receipt / invoice'],['geo','Geo-tagged photo'],['report','Short field report']];
     const allProvided=reqDefs.every(r=>provided[r[0]]);
