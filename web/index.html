@@ -334,8 +334,8 @@ class App extends React.Component {
         locked: i===2 && !m2done,
         pipelineEl:this.pipeline(i===1?['pass','pass','pass','pass']:m.ev), confEl:this.confMeter(i===1?'PASS':m.conf), txShort:m.tx?this.shortTx(m.tx):(i===1&&m2done?this.shortTx(this.hashFrom(g.seed*7+2,64)):'') }; });
     const released = g.milestones[0].amount + (m2done? g.milestones[1].amount:0);
-    const history=[{tag:'M1',tx:this.shortTx(g.milestones[0].tx),amount:this.money(g.milestones[0].amount),time:'5d ago'}];
-    if(m2done) history.push({tag:'M2',tx:this.shortTx(this.hashFrom(g.seed*7+2,64)),amount:this.money(g.milestones[1].amount),time:'just now'});
+    const history=[{tag:'M1',txFull:g.milestones[0].tx,amount:this.money(g.milestones[0].amount),time:'5d ago'}];
+    if(m2done) history.push({tag:'M2',txFull:this.hashFrom(g.seed*7+2,64),amount:this.money(g.milestones[1].amount),time:'just now'});
     return { scenario:sc, hash:g.hash, program:g.program, isActive:true, isRejected:false, isFlagged:false,
       statusChip:this.chip('Awaiting evidence','amber',{dot:true,fs:11}), statusLine:'M1 released. Submit M2 evidence to unlock the next tranche.',
       lifecycleEl:this.lifecycle('AWAIT_EVIDENCE'), amount:this.money(g.amount), released:this.money(released), merit:g.merit,
@@ -597,10 +597,11 @@ class App extends React.Component {
           ms.locked ? h('div',{style:S("margin-top:12px;border-top:1px solid #F0EEE7;padding-top:12px;font-family:'IBM Plex Mono',monospace;font-size:10.5px;color:#A19F95;")},'⊘ Locked — unlocks when prior milestone clears verification.') : null))),
       h('div',{style:S("font-size:11px;font-weight:700;letter-spacing:0.04em;text-transform:uppercase;margin:24px 0 12px;color:#6E6D64;")},'Tranche release history'),
       h('div',{style:S("background:#fff;border:1px solid #E3E1D8;")},
-        app.history.map((hh,i)=> h('div',{key:i,style:S("display:flex;align-items:center;justify-content:space-between;padding:12px 16px;border-bottom:1px solid #F0EEE7;")},
-          h('div',{style:S("display:flex;align-items:center;gap:12px;")},
+        app.history.map((hh,i)=> h('div',{key:i,style:S("display:flex;align-items:center;justify-content:space-between;gap:12px;padding:12px 16px;border-bottom:1px solid #F0EEE7;flex-wrap:wrap;")},
+          h('div',{style:S("display:flex;align-items:center;gap:12px;flex-wrap:wrap;")},
             h('div',{style:S("font-family:'IBM Plex Mono',monospace;font-size:12px;font-weight:600;")},hh.tag),
-            h('div',{style:S("font-family:'IBM Plex Mono',monospace;font-size:11px;color:#8A887E;")},hh.tx)),
+            this.txLink(hh.txFull,{color:'#8A887E'}),
+            hh.txFull ? h('a',{href:this.explorerBase()+'/tx/'+hh.txFull,target:'_blank',rel:'noreferrer',style:S("font-family:'IBM Plex Mono',monospace;font-size:10px;color:#2F7A4E;text-decoration:none;border-bottom:1px dotted #2F7A4E;")},'view on Basescan ↗') : null),
           h('div',{style:S("display:flex;align-items:center;gap:14px;")},
             h('span',{style:S("font-family:'IBM Plex Mono',monospace;font-size:13px;color:#2F7A4E;font-variant-numeric:tabular-nums;")},hh.amount),
             h('span',{style:S("font-family:'IBM Plex Mono',monospace;font-size:10px;color:#9C9A90;")},hh.time)))),
