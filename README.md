@@ -50,8 +50,18 @@ step, no framework deps; React via CDN) with three role views:
 
 A kill-switch in the top bar freezes all disbursements. The design came from a
 Claude Design composition (`Almoner.dc.html`); this is its standalone
-implementation. Data is currently seeded in-component — wiring it to the live
-`AgentCore` state is the next step.
+implementation.
+
+**Live-connected.** `npm run dashboard` runs `src/server.ts`, which executes the
+real pipeline over a portfolio of applications (producing genuine pending /
+awaiting-evidence / complete / flagged / blocked / rejected states) and serves it
+at `GET /api/state`. The dashboard fetches it on load — every merit score, risk
+tier, approval decision, milestone state, tranche tx hash, and the budget math
+come from the real `AgentCore` (the top bar shows **Live · agent**). Co-sign and
+reject `POST` back through the engine: co-signing a grant runs
+`AgentCore.approve` + `releaseTranche` under the `SpendingPolicyGuard`. Only
+presentation labels (program names, evidence-pipeline visuals) are cosmetic.
+Opened as a static file with no server, it falls back to seeded demo data.
 
 > **This is live, not simulated.** `npm run live` disburses real USDC on Base
 > Sepolia through the full pipeline (score → risk → guarded release → verify →

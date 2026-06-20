@@ -50,7 +50,22 @@ class App extends React.Component {
     appPhase: 'idle',
     filters: { program: 'ALL', type: 'ALL', tier: 'ALL' },
     grants: this.seedGrants(),
+    live: false, pool: 2000, reclaimed: 210,
   };
+
+  // On load, pull the real AgentCore portfolio from the backend. Falls back to
+  // the seeded demo data if there's no server (e.g. opened as a static file).
+  componentDidMount(){
+    fetch('/api/state').then(r=> r.ok ? r.json() : Promise.reject()).then(d=>{
+      if(d && Array.isArray(d.grants) && d.grants.length){
+        this.setState({ grants:d.grants, live:true, pool:(d.meta&&d.meta.pool)||2000, reclaimed:(d.meta&&d.meta.reclaimed)||0 });
+      }
+    }).catch(()=>{});
+  }
+  POOL(){ return this.state.pool || 2000; }
+  liveBadge(){ return this.state.live
+    ? h('span',{style:S("display:inline-flex;align-items:center;gap:6px;font-family:'IBM Plex Mono',monospace;font-size:9.5px;letter-spacing:0.06em;text-transform:uppercase;color:#2F7A4E;")}, h('span',{style:S("width:7px;height:7px;background:#2F7A4E;display:inline-block;animation:alm-pulse 2s infinite;")}),'Live · agent')
+    : h('span',{style:S("font-family:'IBM Plex Mono',monospace;font-size:9.5px;letter-spacing:0.06em;text-transform:uppercase;color:#9C9A90;")},'demo data'); }
 
   // ---------- utilities ----------
   money(n){ if(n==null) return '—'; return '$' + Number(n).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2}); }
@@ -228,8 +243,13 @@ class App extends React.Component {
   openGrant(id){ this.setState({ selectedId:id }); }
   closeDrawer(){ this.setState({ selectedId:null }); }
   toggleKill(){ this.setState(s=>({ paused:!s.paused })); }
-  cosign(id){ if(this.state.paused) return; this.setState(s=>({ selectedId: s.selectedId===id?null:s.selectedId, grants: s.grants.map(g=>{ if(g.id!==id) return g; const ms=g.milestones.map(m=>({...m})); ms[0].state='released'; ms[0].ev=['pass','pass','pass','pass']; ms[0].conf='PASS'; ms[0].tx=this.hashFrom(g.seed*7+1,64); ms[1].state='current'; return {...g,status:'AWAIT_EVIDENCE',needsCosign:false,milestones:ms}; }) })); }
-  reject(id){ if(this.state.paused) return; this.setState(s=>({ selectedId: s.selectedId===id?null:s.selectedId, grants: s.grants.map(g=> g.id===id?{...g,status:'REJECTED',needsCosign:false}:g) })); }
+  applyServer(id,d){ if(d&&d.grants) this.setState(s=>({ grants:d.grants, reclaimed:(d.meta&&d.meta.reclaimed!=null)?d.meta.reclaimed:s.reclaimed, selectedId: s.selectedId===id?null:s.selectedId })); }
+  cosign(id){ if(this.state.paused) return;
+    if(this.state.live){ fetch('/api/grants/'+id+'/cosign',{method:'POST'}).then(r=>r.json()).then(d=>this.applyServer(id,d)).catch(()=>{}); return; }
+    this.setState(s=>({ selectedId: s.selectedId===id?null:s.selectedId, grants: s.grants.map(g=>{ if(g.id!==id) return g; const ms=g.milestones.map(m=>({...m})); ms[0].state='released'; ms[0].ev=['pass','pass','pass','pass']; ms[0].conf='PASS'; ms[0].tx=this.hashFrom(g.seed*7+1,64); ms[1].state='current'; return {...g,status:'AWAIT_EVIDENCE',needsCosign:false,milestones:ms}; }) })); }
+  reject(id){ if(this.state.paused) return;
+    if(this.state.live){ fetch('/api/grants/'+id+'/reject',{method:'POST'}).then(r=>r.json()).then(d=>this.applyServer(id,d)).catch(()=>{}); return; }
+    this.setState(s=>({ selectedId: s.selectedId===id?null:s.selectedId, grants: s.grants.map(g=> g.id===id?{...g,status:'REJECTED',needsCosign:false}:g) })); }
   setApp(sc){ this.setState({ appScenario:sc, appPhase:'idle', appProvided:{} }); }
   attach(key){ this.setState(s=>({ appProvided:{...s.appProvided,[key]:true} })); }
   submitEvidence(){ this.setState({ appPhase:'verifying' }); setTimeout(()=>{ this.setState({ appPhase:'verified' }); }, 1700); }
@@ -320,7 +340,7 @@ class App extends React.Component {
       onMouseLeave:e=>{e.currentTarget.style.background='#fff';e.currentTarget.style.color='#B23A30';}}, h('span',{style:{fontSize:13,lineHeight:1}},'⏻'),'Pause all');
   }
 
-  capsMiniEl(){ const used=this.disbursedTotal(); const pct=Math.round(used/2000*100);
+  capsMiniEl(){ const used=this.disbursedTotal(); const pct=Math.round(used/this.POOL()*100);
     return h('div',{style:{display:'flex',alignItems:'center',gap:10}},
       this.chip('under caps','green',{dot:true,fs:9.5}),
       h('span',{style:{fontFamily:this.MONO,fontSize:10,color:'#8A887E'}},'pool '+pct+'%')); }
@@ -350,8 +370,9 @@ class App extends React.Component {
     const s=this.state;
     const grants=s.grants;
     const disbursed=this.disbursedTotal();
-    const reclaimed=210;
-    const m={ pool:this.money(2000), disbursed:this.money(disbursed), disbursedSub:grants.filter(g=>g.milestones.some(x=>x.state==='released')).length+' grants · '+Math.round(disbursed/2000*100)+'% of pool', reclaimed:this.money(reclaimed), available:this.money(2000-disbursed) };
+    const pool=this.POOL();
+    const reclaimed=this.state.reclaimed!=null?this.state.reclaimed:210;
+    const m={ pool:this.money(pool), disbursed:this.money(disbursed), disbursedSub:grants.filter(g=>g.milestones.some(x=>x.state==='released')).length+' grants · '+Math.round(disbursed/pool*100)+'% of pool', reclaimed:this.money(reclaimed), available:this.money(pool-disbursed) };
     const recipMax=Math.max(...grants.map(g=>g.milestones.filter(x=>x.state==='released').reduce((a,x)=>a+x.amount,0)));
     const txMax=Math.max(0,...grants.flatMap(g=>g.milestones.filter(x=>x.state==='released').map(x=>x.amount)));
     const capDef=[
@@ -678,7 +699,7 @@ class App extends React.Component {
               h('div',{style:S("font-size:16px;font-weight:700;letter-spacing:-0.01em;")},'Almoner'),
               h('div',{style:S("font-family:'IBM Plex Mono',monospace;font-size:8.5px;letter-spacing:0.13em;color:#8A887E;margin-top:3px;text-transform:uppercase;")},'Autonomous Microgrant Officer'))),
           v.roleSwitcher,
-          h('div',{style:S("margin-left:auto;display:flex;align-items:center;gap:18px;")}, v.capsMini, v.killBtn)),
+          h('div',{style:S("margin-left:auto;display:flex;align-items:center;gap:18px;")}, this.liveBadge(), v.capsMini, v.killBtn)),
         v.paused ? h('div',{style:S("background:#B23A30;color:#fff;font-family:'IBM Plex Mono',monospace;font-size:11px;letter-spacing:0.06em;text-align:center;padding:6px;text-transform:uppercase;")},'⊘ Disbursement engine frozen — all releases held. Operator action required to resume.') : null),
       h('div',{style:S("max-width:1340px;margin:0 auto;padding:26px 26px 80px;")},
         v.isFunder ? this.renderFunder(v) : null,
