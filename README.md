@@ -23,8 +23,8 @@ npm run demo:disaster   # post-typhoon preset (Philippines) — proves config-sw
 npm run circle:plan     # show how each program maps to Circle's native caps
 npm run typecheck
 
-# Claude Agent SDK brain (Claude operates the wallet). Needs an API key:
-ANTHROPIC_API_KEY=sk-ant-... npm run brain
+# Gemini brain (Gemini operates the wallet). Needs a free Gemini key:
+GEMINI_API_KEY=... npm run brain
 
 # REAL USDC tranches on Base Sepolia (needs a Circle CLI testnet session):
 npm run live
@@ -44,27 +44,27 @@ network. All external services (Circle wallet, x402 screening/image-check, the
 scoring LLM) run as mocks behind interfaces so the whole lifecycle plays the
 same every run.
 
-### Two ways to drive the same engine
+### Three ways to drive the same engine
 
-| | `npm run demo` | `npm run brain` |
-|---|---|---|
-| Driver | deterministic script | **Claude Agent SDK** — Claude decides + calls tools |
-| Needs | nothing | `ANTHROPIC_API_KEY` (Pro/Max OAuth is **not** accepted by the SDK) |
-| Money path | guarded `AgentCore` | **same** guarded `AgentCore`, called via MCP tools |
+| | `npm run demo` | `npm run brain` | `npm run live` |
+|---|---|---|---|
+| Driver | deterministic script | **Gemini** decides + calls tools | deterministic script |
+| Needs | nothing | `GEMINI_API_KEY` (free tier) | Circle CLI testnet session |
+| Money | mock (guarded) | mock (guarded) | **real USDC on Base Sepolia** |
 
-The brain (`src/agent/brain.ts`) runs Claude as the grant officer through an
-**in-process MCP server** (`src/agent/tools/circleWalletMcp.ts`) built with the
-SDK's `createSdkMcpServer`/`tool`. Claude calls `evaluate_application`,
-`release_next_tranche`, `verify_milestone_evidence`, etc. — but every one routes
+The brain (`src/agent/geminiBrain.ts`) runs **Gemini** as the grant officer via
+function calling. It calls the vendor-neutral `GrantOfficerToolkit`
+(`src/agent/tools/grantToolkit.ts`) — `evaluate_application`,
+`release_next_tranche`, `verify_milestone_evidence`, etc. — but every call routes
 through `AgentCore` → `PolicyEngine` + `SpendingPolicyGuard`, so **the LLM cannot
-move funds outside the caps**, and a `canUseTool` callback enforces operator
-co-signature on human-band grants. The LLM reasons; the deterministic core
-enforces.
+move funds outside the caps**, and a co-sign gate denies releasing human-band
+grants without operator approval. The LLM reasons; the deterministic core
+enforces. The toolkit is model-agnostic, so swapping the brain (Gemini, or any
+function-calling model) doesn't touch the money path.
 
-> **Note on "Circle Skills (MCP)":** Circle ships *no* MCP server — its "Skills"
-> are markdown docs that teach an agent to drive the `circle` CLI. So we expose
-> the wallet ops as in-process MCP tools ourselves (cleaner, no extra process);
-> Circle Skills are the knowledge layer behind the CLI-backed `live` impl.
+> **Note on "Circle Skills":** Circle ships *no* MCP server — its "Skills" are
+> markdown docs that teach an agent to drive the `circle` CLI. The live adapter
+> shells out to that CLI directly; Circle Skills are the knowledge layer behind it.
 
 It walks the §11 scenario end-to-end: 4 applications → score + risk-screen →
 auto-approve / human-queue / reject / **block** → tranche disbursement with tx
@@ -84,7 +84,7 @@ reclaim → public ledger + budget burndown.
 | USDC transfers | mock wallet running the real guard | `LiveCircleWallet` over Circle CLI, Arc testnet |
 | Circle CLI adapter | ✅ pure argv builders + policy mapping (unit-testable) | inject `CircleCliRunner` (spawns `circle`) |
 | Wallet screening / image check | mock x402 client | x402 marketplace (paid nanopayments) |
-| Scoring "LLM" | deterministic fixtures | Claude Agent SDK |
+| Scoring "LLM" | deterministic fixtures | Gemini (`@google/genai`) |
 | On-chain ledger | in-memory append-only mirror | Arc testnet events |
 
 > **Circle policy reality (researched, see [`docs/circle-integration.md`](docs/circle-integration.md)):**
@@ -153,9 +153,9 @@ src/
   config/loader.ts       JSONC loader + invariant validation
   agent/
     core.ts              orchestrator + buildDecision() (the lifecycle)
-    brain.ts             Claude Agent SDK grant-officer loop (needs API key)
+    geminiBrain.ts       Gemini function-calling grant-officer loop (needs key)
     tools/
-      circleWalletMcp.ts in-process MCP tools (guarded wallet ops for the LLM)
+      grantToolkit.ts    vendor-neutral guarded tools (used by the brain)
     scoring.ts           merit / impact rubric (§6.1)
     risk.ts              risk / fraud scoring + tiers (§6.2)
     verify.ts            milestone evidence pipeline (§7)
@@ -200,7 +200,7 @@ the fund.
 ## Roadmap / not yet built
 
 - `live` adapters: Circle CLI/SDK wallet ops on Arc testnet; x402 paid calls;
-  Claude Agent SDK as the scoring/verification brain.
+  Gemini as the scoring/verification brain.
 - React dashboard (funder / applicant / public-ledger views).
 - SQLite/Postgres + IPFS/object store behind the `Store` interface.
 - Stretch: endorser staking & slashing, sybil-cluster graph analysis, on-chain
