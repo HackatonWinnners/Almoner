@@ -21,6 +21,34 @@ policy-capable mainnet chain, the live adapter *additionally* pushes the
 native-expressible subset to Circle's wallet layer as redundant defense
 (`LiveCircleWallet.applyNativePolicy()`).
 
+## Verified live on Base Sepolia (2026-06-20)
+
+We took the live path all the way to real on-chain transfers. What the research
+missed and hands-on use corrected:
+
+- **Agent wallets need a separate testnet session.** `circle wallet login <email>
+  --type agent --testnet` creates a *distinct* testnet wallet — with a **different
+  address** than the mainnet wallet from a plain login. Funds sent to the mainnet
+  address on a testnet are not drivable by the testnet session.
+- **`circle wallet create` has no `--chain`/`--testnet` flag** — the active login
+  session (mainnet vs testnet) decides which network the wallet is on.
+- **Arc testnet *is* supported** by the CLI (`circle blockchain list` →
+  `ARC-TESTNET`, chainId 5042002). The earlier "no Arc" read was wrong — the
+  wallet-create output just lists mainnet chains by default. (Arc is still
+  testnet-only, so the mainnet-only spending policy still can't run there.)
+- **Chain identifiers are network-specific:** `BASE` = mainnet (8453),
+  `BASE-SEPOLIA` = testnet (84532). Querying balance on the wrong one returns
+  empty.
+- **Transfer syntax (verified):** `toAddress` is **positional**; `--token <usdc>`
+  is **required** (omit → sends native ETH); `--address` is the **source** wallet.
+  USDC on Base Sepolia is `0x036cbd53842c5426634e7929541ec2318f3dcf7e`.
+- **Gas is sponsored** (ERC-4337 smart accounts) — the treasury needs no ETH.
+- **Transfers return `state: CONFIRMED` with both `id` and `txHash`** synchronously
+  (no polling needed in practice). `pickTxRef` reads `data.txHash`.
+
+Proof — `npm run live` disbursed two real tranches:
+`0.2 USDC → m1` and (after verification) `0.2 USDC → m2`, treasury 19.9 → 19.5 USDC.
+
 ## What Circle's native policy can express
 
 Only **monotonic amount caps**, policy-type `stablecoin`:
@@ -54,15 +82,18 @@ Verified command names (flags marked ⚠️ need a `--help` confirmation when wi
 # one-time operator setup
 npm install -g @circle-fin/cli
 circle skill install --tool claude-code          # or: npx skills add circlefin/skills -g
-circle wallet login <email> --type agent --init
-circle wallet login --type agent --request <request-id> --otp <code>
-circle wallet create --output json               # program treasury wallet
-# fund: https://faucet.circle.com  (testnet USDC)
+# TESTNET session (note --testnet — creates a testnet wallet with its own address):
+CIRCLE_ACCEPT_TERMS=1 circle wallet login <email> --type agent --testnet --init
+CIRCLE_ACCEPT_TERMS=1 circle wallet login --type agent --testnet --request <request-id> --otp <code>
+CIRCLE_ACCEPT_TERMS=1 circle wallet create --output json     # treasury wallet (on the session's network)
+CIRCLE_ACCEPT_TERMS=1 circle wallet list --type agent --chain BASE-SEPOLIA --output json
+# fund the testnet treasury address: https://faucet.circle.com  (Base Sepolia)
 
-# operations the agent uses
-circle wallet balance  --address <addr> --chain <chain> --output json
-circle wallet transfer --address <addr> --chain <chain> --to <addr> --amount <usdc> --output json   # ⚠️ verify flags
-circle services pay "<url>" -X <METHOD> --address <addr> --chain <chain> --max-amount <usdc> --output json   # x402
+# operations the agent uses (verified)
+circle wallet balance  --address <src> --chain BASE-SEPOLIA --output json
+circle wallet transfer <toAddress> --amount <usdc> --token 0x036cbd53842c5426634e7929541ec2318f3dcf7e --address <src> --chain BASE-SEPOLIA --output json
+circle wallet transfer <toAddress> --amount <usdc> --token <usdc> --address <src> --chain BASE-SEPOLIA --estimate   # dry-run
+circle services pay "<url>" -X <METHOD> --address <src> --chain <chain> --max-amount <usdc> --output json   # x402
 circle wallet limit set ...                       # mainnet only (see above)
 ```
 

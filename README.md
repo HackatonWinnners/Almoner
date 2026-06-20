@@ -25,7 +25,19 @@ npm run typecheck
 
 # Claude Agent SDK brain (Claude operates the wallet). Needs an API key:
 ANTHROPIC_API_KEY=sk-ant-... npm run brain
+
+# REAL USDC tranches on Base Sepolia (needs a Circle CLI testnet session):
+npm run live
 ```
+
+> **This is live, not simulated.** `npm run live` disburses real USDC on Base
+> Sepolia through the full pipeline (score → risk → guarded release → verify →
+> next tranche), e.g.
+> [m1 0.2 USDC](https://sepolia.basescan.org/tx/0xebf9c224f322f131180764dfb5817a5d6c793c5408477c0aeb472a06ce1dd4d7)
+> → verify PASS →
+> [m2 0.2 USDC](https://sepolia.basescan.org/tx/0x321f26d7947bc9a7c9204ac6e5a674cc92a73e7181c70450d15c52adae3a1bec).
+> Setup + the Circle integration reality (testnet sessions, mainnet-only policy,
+> verified CLI surface) are in [`docs/circle-integration.md`](docs/circle-integration.md).
 
 The default demo is **fully offline and deterministic** — no API keys, no
 network. All external services (Circle wallet, x402 screening/image-check, the

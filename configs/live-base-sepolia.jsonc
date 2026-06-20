@@ -1,0 +1,53 @@
+{
+  // Live testnet program — tiny USDC amounts that fit a faucet-funded wallet,
+  // so the full Almoner pipeline disburses REAL USDC on Base Sepolia with real
+  // tx hashes. Used by `npm run live`. Disbursement chain is BASE-SEPOLIA
+  // (chainId 84532); the agent treasury wallet is a Circle agent wallet on a
+  // testnet session.
+  "program_id": "live-base-sepolia",
+  "title": "Almoner Live Testnet Disbursement",
+  "country": "Base Sepolia (testnet)",
+  "sdg_tags": [1],
+  "currency": "USDC",
+  "chain": "BASE-SEPOLIA",
+
+  "budget": {
+    "total_pool": 5,
+    "per_grant_cap": 2,
+    "per_recipient_cumulative_cap": 2,
+    "period_cap": { "window": "24h", "amount": 3 }
+  },
+
+  "eligibility": {
+    "categories": ["microgrant"],
+    "geo_allow": ["test"],
+    "exclude_if": ["duplicate_active_grant", "denylisted_wallet"]
+  },
+
+  "scoring": {
+    "fund_threshold": 60,
+    "weights": {
+      "need": 0.25, "feasibility": 0.20, "impact_per_dollar": 0.20,
+      "plan_clarity": 0.15, "local_legitimacy": 0.10, "sdg_alignment": 0.10
+    }
+  },
+
+  "approval_policy": {
+    "auto_approve_ceiling": 2,
+    "human_review_band": [2, 2],
+    "hard_reject_below_score": 40
+  },
+
+  "risk_policy": {
+    "screening_required": true,
+    "min_wallet_age_days_for_auto": 30,
+    "new_wallet_first_tranche_cap": 1,
+    "require_endorser_above": 5
+  },
+
+  "milestones": [
+    { "id": "m1", "label": "Start: materials purchased", "tranche_pct": 40, "evidence": ["receipt", "geo_photo"] },
+    { "id": "m2", "label": "Implementation: installed", "tranche_pct": 40, "evidence": ["geo_photo", "report"] },
+    { "id": "m3", "label": "Outcome: working", "tranche_pct": 20, "evidence": ["geo_photo", "attestation"] }
+  ]
+}

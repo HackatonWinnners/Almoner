@@ -13,6 +13,7 @@
     "circle:plan": "tsx src/tools/circlePolicy.ts",
     "brain": "tsx src/brain-demo.ts",
     "brain:disaster": "tsx src/brain-demo.ts post-disaster-ph-2026",
+    "live": "tsx src/live-demo.ts",
     "typecheck": "tsc --noEmit",
     "build": "tsc"
   },

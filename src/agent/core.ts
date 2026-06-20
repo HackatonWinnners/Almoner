@@ -134,7 +134,9 @@ export class AgentCore {
     const ms = cfg.milestones[idx];
     if (!ms) throw new Error(`no milestone at index ${idx} for grant ${grantId}`);
 
-    let amount = Math.round(g.application.requestedAmount * (ms.tranche_pct / 100));
+    // Round to USDC precision (6 dp) — NOT to integer, or sub-dollar tranches
+    // (e.g. 0.5 × 40% = 0.2) collapse to 0.
+    let amount = Math.round(g.application.requestedAmount * (ms.tranche_pct / 100) * 1e6) / 1e6;
     if (idx === 0 && g.decision?.firstTrancheCap !== undefined) {
       amount = Math.min(amount, g.decision.firstTrancheCap);
     }

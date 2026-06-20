@@ -27,7 +27,10 @@ export class CircleCliRunner implements CliRunner {
   constructor(private readonly bin = "circle") {}
   run(args: string[]): Promise<string> {
     return new Promise((resolve, reject) => {
-      const child = spawn(this.bin, args, { stdio: ["ignore", "pipe", "pipe"] });
+      // CIRCLE_ACCEPT_TERMS=1 lets the CLI run non-interactively (already
+      // accepted interactively during operator login).
+      const env = { ...process.env, CIRCLE_ACCEPT_TERMS: "1" };
+      const child = spawn(this.bin, args, { stdio: ["ignore", "pipe", "pipe"], env });
       let out = "";
       let err = "";
       child.stdout.on("data", (d) => (out += d));
@@ -40,36 +43,50 @@ export class CircleCliRunner implements CliRunner {
 
 export interface LiveWalletConfig {
   cfg: ProgramConfig;
-  address: string; // treasury wallet address
+  address: string; // treasury (source) wallet address
+  usdcTokenAddress: string; // USDC contract on this chain (omit → sends native ETH!)
   treasuryReclaimAddress?: string; // where reclaimed funds go (defaults to self)
   policy: WalletPolicy;
   clock: () => string;
   runner?: CliRunner;
 }
 
-// --- pure argv builders (unit-testable) ---
+// --- pure argv builders (verified against `circle wallet transfer --help`) ---
+// Usage: circle wallet transfer <toAddress> --amount <n> --token <usdc> --address <src> --chain <c>
 export function balanceArgs(address: string, chain: string): string[] {
   return ["wallet", "balance", "--address", address, "--chain", chain, "--output", "json"];
 }
-export function transferArgs(address: string, chain: string, to: string, amount: number): string[] {
-  return ["wallet", "transfer", "--address", address, "--chain", chain, "--to", to, "--amount", String(amount), "--output", "json"];
+export function transferArgs(sourceAddress: string, chain: string, to: string, amount: number, tokenAddress: string): string[] {
+  // toAddress is POSITIONAL; --address is the SOURCE; --token is required for USDC.
+  return ["wallet", "transfer", to, "--amount", String(amount), "--token", tokenAddress, "--address", sourceAddress, "--chain", chain, "--output", "json"];
 }
 
-/** Best-effort extraction of a tx hash / USDC amount from Circle CLI JSON. */
-function pickTxHash(stdout: string): string {
+/**
+ * Best-effort extraction of a transaction reference from Circle CLI JSON.
+ * Agent-wallet transfers are async MPC ops that return a transaction ID (under
+ * `data`), not an immediate on-chain hash; we capture whichever is present.
+ */
+function pickTxRef(stdout: string): string {
   try {
     const j = JSON.parse(stdout);
-    return j.txHash ?? j.transactionHash ?? j.hash ?? j.tx ?? j.id ?? "0xUNKNOWN";
+    const d = j.data ?? j;
+    return d.txHash ?? d.transactionHash ?? d.hash ?? d.transactionId ?? d.id ?? d.tx ?? "PENDING";
   } catch {
     const m = stdout.match(/0x[a-fA-F0-9]{64}/);
-    return m?.[0] ?? "0xUNKNOWN";
+    return m?.[0] ?? "PENDING";
   }
 }
 function pickAmount(stdout: string): number {
   try {
     const j = JSON.parse(stdout);
-    const v = j.balance ?? j.amount ?? j.usdc ?? j.available ?? j?.balances?.[0]?.amount;
-    return typeof v === "string" ? Number(v) : typeof v === "number" ? v : 0;
+    // Shape: { data: { balances: [ { amount: "19.9", token: { symbol: "USDC" } } ] } }
+    const balances = j.data?.balances ?? j.balances ?? [];
+    if (Array.isArray(balances) && balances.length) {
+      const usdc = balances.find((b: { token?: { symbol?: string } }) => b?.token?.symbol === "USDC") ?? balances[0];
+      return Number(usdc?.amount ?? 0);
+    }
+    const v = j.data?.balance ?? j.balance ?? j.amount;
+    return v != null ? Number(v) : 0;
   } catch {
     return 0;
   }
@@ -94,17 +111,17 @@ export class LiveCircleWallet implements CircleWallet {
     // Hard backstop runs FIRST — on Arc testnet this is the only enforcement
     // there is, since Circle's native policy cannot be set on a testnet.
     this.guard.check(req);
-    const stdout = await this.runner.run(transferArgs(this.c.address, this.chain, req.to, req.amount));
-    const receipt: TransferReceipt = { txHash: pickTxHash(stdout), to: req.to, amount: req.amount, at: this.c.clock() };
+    const stdout = await this.runner.run(transferArgs(this.c.address, this.chain, req.to, req.amount, this.c.usdcTokenAddress));
+    const receipt: TransferReceipt = { txHash: pickTxRef(stdout), to: req.to, amount: req.amount, at: this.c.clock() };
     this.guard.commit(req);
     return receipt;
   }
 
   async reclaim(grantId: string, amount: number): Promise<TransferReceipt> {
     const to = this.c.treasuryReclaimAddress ?? this.c.address;
-    const stdout = await this.runner.run(transferArgs(this.c.address, this.chain, to, amount));
+    const stdout = await this.runner.run(transferArgs(this.c.address, this.chain, to, amount, this.c.usdcTokenAddress));
     this.guard.credit(amount);
-    return { txHash: pickTxHash(stdout), to, amount, at: this.c.clock() };
+    return { txHash: pickTxRef(stdout), to, amount, at: this.c.clock() };
   }
 
   /**
